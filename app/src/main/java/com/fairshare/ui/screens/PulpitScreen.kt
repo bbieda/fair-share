@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -38,10 +36,10 @@ import androidx.compose.ui.unit.sp
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.BalanceAmount
 import com.fairshare.ui.components.ColorDot
+import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
-import com.fairshare.ui.components.TonalPill
 import com.fairshare.ui.sample.sampleCategories
 import com.fairshare.ui.theme.AvatarColors
 import com.fairshare.ui.theme.FairShareTheme
@@ -57,22 +55,20 @@ private data class PersonBalance(
     val avatar: AvatarColors,
 )
 
-private val people = listOf(
-    PersonBalance("Ania", "2 grupy", "winna ci", "186,00 zł", true, AvatarColors.Pink),
-    PersonBalance("Kuba", "Mieszkanie", "winien ci", "150,00 zł", true, AvatarColors.Blue),
-    PersonBalance("Ola", "Wyjazd Zakopane", "jesteś winien", "120,00 zł", false, AvatarColors.Orange),
-    PersonBalance("Marta", "Mieszkanie", "winna ci", "76,00 zł", true, AvatarColors.Purple),
-)
+private val people = emptyList<PersonBalance>()
 
 @Composable
-fun PulpitScreen() {
+fun PulpitScreen(
+    onOpenProfile: () -> Unit = {},
+    onSettle: () -> Unit = {},
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
     ) {
-        ScreenHeader("Pulpit")
+        ScreenHeader("Pulpit", onProfileClick = onOpenProfile)
         Spacer(Modifier.height(12.dp))
         BalanceCard()
         Spacer(Modifier.height(12.dp))
@@ -88,7 +84,7 @@ fun PulpitScreen() {
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = {}) { Text("Rozlicz się") }
+            TextButton(onClick = onSettle) { Text("Rozlicz się") }
         }
 
         var filter by remember { mutableIntStateOf(0) }
@@ -98,7 +94,11 @@ fun PulpitScreen() {
             }
         }
 
-        people.forEach { PersonRow(it) }
+        if (people.isEmpty()) {
+            EmptyHint("Brak rozliczeń. Dodaj pierwszy wydatek.")
+        } else {
+            people.forEach { PersonRow(it) }
+        }
     }
 }
 
@@ -116,14 +116,14 @@ private fun BalanceCard() {
         ) {
             Text("Ogólnie tobie są winni", style = MaterialTheme.typography.titleSmall)
             Text(
-                "245,50 zł",
+                "0,00 zł",
                 style = MaterialTheme.typography.displaySmall,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Medium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MiniBalance("Winni tobie", "412,00 zł", Positive, Modifier.weight(1f))
-                MiniBalance("Ty winien", "166,50 zł", Negative, Modifier.weight(1f))
+                MiniBalance("Winni tobie", "0,00 zł", Positive, Modifier.weight(1f))
+                MiniBalance("Ty winien", "0,00 zł", Negative, Modifier.weight(1f))
             }
         }
     }
@@ -148,19 +148,24 @@ private fun MonthSummaryCard() {
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Październik · twój udział",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text("2 000 zł", style = MaterialTheme.typography.headlineSmall)
-                }
-                TonalPill("+12% m/m", Icons.AutoMirrored.Outlined.TrendingUp)
+            Column {
+                Text(
+                    "Październik · twój udział",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text("0 zł", style = MaterialTheme.typography.headlineSmall)
             }
 
-            Row(
+            if (sampleCategories.isEmpty()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                )
+            } else Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(10.dp),

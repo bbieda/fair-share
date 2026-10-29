@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.TrendingUp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -37,22 +35,22 @@ import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.ColorDot
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
-import com.fairshare.ui.components.TonalPill
 import com.fairshare.ui.sample.CategoryShare
 import com.fairshare.ui.sample.sampleCategories
 import com.fairshare.ui.theme.FairShareTheme
 
-private val lastMonths = listOf("maj" to 28, "cze" to 30, "lip" to 40, "sie" to 34, "wrz" to 31, "paź" to 35)
+// Bar heights in dp; 0 = no spending that month
+private val lastMonths = listOf("maj" to 0, "cze" to 0, "lip" to 0, "sie" to 0, "wrz" to 0, "paź" to 0)
 
 @Composable
-fun StatystykiScreen() {
+fun StatystykiScreen(onOpenProfile: () -> Unit = {}) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
     ) {
-        ScreenHeader("Statystyki")
+        ScreenHeader("Statystyki", onProfileClick = onOpenProfile)
 
         Row(
             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -84,24 +82,18 @@ private fun MonthTotalCard() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "2 000 zł",
+                "0 zł",
                 style = MaterialTheme.typography.displaySmall,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 2.dp),
             )
-            Row(
+            Text(
+                "średnio 0,00 zł dziennie",
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TonalPill("+12% m/m", Icons.AutoMirrored.Outlined.TrendingUp)
-                Text(
-                    "średnio 64,52 zł dziennie",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            )
         }
     }
 }
@@ -125,7 +117,7 @@ private fun StructureCard() {
                 Box(Modifier.size(128.dp), contentAlignment = Alignment.Center) {
                     DonutChart(sampleCategories, Modifier.size(128.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("2 000 zł", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        Text("0 zł", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                         Text(
                             "razem",
                             fontSize = 11.sp,
@@ -138,6 +130,13 @@ private fun StructureCard() {
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
+                    if (sampleCategories.isEmpty()) {
+                        Text(
+                            "Brak wydatków w tym miesiącu",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     sampleCategories.forEach { category ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -156,11 +155,15 @@ private fun StructureCard() {
 
 @Composable
 private fun DonutChart(categories: List<CategoryShare>, modifier: Modifier = Modifier) {
+    val emptyColor = MaterialTheme.colorScheme.surfaceContainerHighest
     Canvas(modifier) {
         val strokeWidth = 18.dp.toPx()
         val radius = size.minDimension * 50f / 128f
         val topLeft = Offset(center.x - radius, center.y - radius)
         val arcSize = Size(radius * 2, radius * 2)
+        if (categories.isEmpty()) {
+            drawArc(emptyColor, 0f, 360f, false, topLeft, arcSize, style = Stroke(width = strokeWidth))
+        }
         val gapDegrees = 2.3f
         var start = -90f
         categories.forEach { category ->
@@ -201,7 +204,7 @@ private fun LastMonthsCard() {
                         Box(
                             Modifier
                                 .fillMaxWidth()
-                                .height(height.dp)
+                                .height(maxOf(height, 4).dp)
                                 .background(
                                     if (current) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.surfaceContainerHighest,
@@ -228,12 +231,12 @@ private fun BudgetCard() {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Budżet · Jedzenie na mieście",
+                    "Budżet",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
                 )
-                Text("624 / 800 zł", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text("0 / 0 zł", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             }
             Box(
                 Modifier
@@ -241,16 +244,9 @@ private fun BudgetCard() {
                     .fillMaxWidth()
                     .height(8.dp)
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(4.dp)),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(0.78f)
-                        .height(8.dp)
-                        .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(4.dp)),
-                )
-            }
+            )
             Text(
-                "Zostało 176 zł na 9 dni",
+                "Nie ustawiono budżetu",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),

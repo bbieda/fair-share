@@ -2,6 +2,7 @@ package com.fairshare.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ArrowDropDown
 import androidx.compose.material.icons.outlined.Check
@@ -34,6 +37,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,6 +50,7 @@ import com.fairshare.ui.theme.Positive
 fun ScreenHeader(
     title: String,
     modifier: Modifier = Modifier,
+    onProfileClick: () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
@@ -64,9 +69,81 @@ fun ScreenHeader(
             verticalAlignment = Alignment.CenterVertically,
             content = {
                 actions()
-                ProfileButton()
+                ProfileButton(onProfileClick)
             },
         )
+    }
+}
+
+/** Title row for secondary screens: back (or close) button, title, optional actions. */
+@Composable
+fun BackHeader(
+    title: String,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    navIcon: ImageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+    navLabel: String = "Wróć",
+    actions: @Composable RowScope.() -> Unit = {},
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IconButton(onClick = onBack, modifier = Modifier.size(44.dp)) {
+            Icon(navIcon, contentDescription = navLabel)
+        }
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        actions()
+    }
+}
+
+/** Icon + text list row; `overline` sits above the headline, `supporting` below it. */
+@Composable
+fun ListRow(
+    icon: ImageVector,
+    headline: String,
+    modifier: Modifier = Modifier,
+    overline: String? = null,
+    supporting: String? = null,
+    iconTint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    headlineColor: Color = MaterialTheme.colorScheme.onBackground,
+    showChevron: Boolean = true,
+    onClick: () -> Unit = {},
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(if (overline != null) 64.dp else 60.dp)
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Icon(icon, contentDescription = null, tint = iconTint)
+        Column(Modifier.weight(1f)) {
+            if (overline != null) {
+                Text(overline, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(headline, style = MaterialTheme.typography.bodyLarge, color = headlineColor)
+            if (supporting != null) {
+                Text(supporting, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (showChevron) {
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -233,6 +310,20 @@ fun OutlinedRow(
         color = Color.Transparent,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         content = content,
+    )
+}
+
+/** Placeholder text shown when a list has nothing to display yet. */
+@Composable
+fun EmptyHint(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 24.dp),
+        textAlign = TextAlign.Center,
     )
 }
 

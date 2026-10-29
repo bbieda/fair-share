@@ -17,10 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Landscape
 import androidx.compose.material.icons.outlined.Link
-import androidx.compose.material.icons.outlined.Restaurant
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
@@ -39,16 +36,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fairshare.ui.components.BalanceAmount
+import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.IconTile
 import com.fairshare.ui.components.OutlinedRow
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
-import com.fairshare.ui.theme.AvatarColors
 import com.fairshare.ui.theme.FairShareTheme
-import com.fairshare.ui.theme.OnPrimaryContainer
-import com.fairshare.ui.theme.OnTertiaryContainer
-import com.fairshare.ui.theme.PrimaryContainer
-import com.fairshare.ui.theme.TertiaryContainer
 
 private data class GroupBalance(val caption: String, val amount: String, val positive: Boolean)
 
@@ -62,30 +55,20 @@ private data class GroupItem(
     val balance: GroupBalance?,
 )
 
-private val groups = listOf(
-    GroupItem(
-        "Mieszkanie", "4 osoby · Ania dodała „Biedronka”", Icons.Outlined.Home,
-        PrimaryContainer, OnPrimaryContainer, GroupBalance("winni ci", "336,00 zł", true),
-    ),
-    GroupItem(
-        "Wyjazd Zakopane", "4 osoby · Tomek dodał „Bilety na kolejkę”", Icons.Outlined.Landscape,
-        TertiaryContainer, OnTertiaryContainer, GroupBalance("jesteś winien", "90,50 zł", false),
-    ),
-    GroupItem(
-        "Kolacje z ekipą", "6 osób · ostatnio 12 paź", Icons.Outlined.Restaurant,
-        AvatarColors.Pink.container, AvatarColors.Pink.content, null,
-    ),
-)
+private val groups = emptyList<GroupItem>()
 
 @Composable
-fun GrupyScreen() {
+fun GrupyScreen(
+    onOpenProfile: () -> Unit = {},
+    onOpenGroup: (String) -> Unit = {},
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
     ) {
-        ScreenHeader("Grupy")
+        ScreenHeader("Grupy", onProfileClick = onOpenProfile)
         Text(
             "Aktywne",
             style = MaterialTheme.typography.titleSmall,
@@ -93,8 +76,12 @@ fun GrupyScreen() {
             modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
         )
 
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            groups.forEach { GroupCard(it) }
+        if (groups.isEmpty()) {
+            EmptyHint("Nie masz jeszcze żadnych grup.")
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                groups.forEach { group -> GroupCard(group, onClick = { onOpenGroup(group.name) }) }
+            }
         }
 
         Spacer(Modifier.height(8.dp))
@@ -106,7 +93,7 @@ fun GrupyScreen() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "Zarchiwizowane (2)",
+                    "Zarchiwizowane (0)",
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
@@ -144,8 +131,8 @@ fun GrupyScreen() {
 }
 
 @Composable
-private fun GroupCard(group: GroupItem) {
-    SectionCard(modifier = Modifier.fillMaxWidth(), onClick = {}) {
+private fun GroupCard(group: GroupItem, onClick: () -> Unit) {
+    SectionCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Row(
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,

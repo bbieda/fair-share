@@ -1,5 +1,6 @@
 package com.fairshare.ui.navigation
 
+import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
@@ -27,8 +28,12 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.fairshare.ui.components.AddExpenseFab
 import com.fairshare.ui.screens.AktywnoscScreen
+import com.fairshare.ui.screens.DodajWydatekScreen
+import com.fairshare.ui.screens.GrupaScreen
 import com.fairshare.ui.screens.GrupyScreen
+import com.fairshare.ui.screens.ProfilScreen
 import com.fairshare.ui.screens.PulpitScreen
+import com.fairshare.ui.screens.RozliczScreen
 import com.fairshare.ui.screens.StatystykiScreen
 
 enum class Destination(
@@ -41,28 +46,49 @@ enum class Destination(
     Pulpit("pulpit", "Pulpit", Icons.Outlined.Home, showFab = true),
     Grupy("grupy", "Grupy", Icons.Outlined.Group, showFab = true),
     Statystyki("statystyki", "Statystyki", Icons.Outlined.BarChart),
-    Aktywnosc("aktywnosc", "Aktywność", Icons.Outlined.Notifications, badge = 3),
+    Aktywnosc("aktywnosc", "Aktywność", Icons.Outlined.Notifications),
+}
+
+/** Screens opened from the tabs; they sit on top of the tab's back stack. */
+private object Routes {
+    const val GROUP = "grupa/{name}"
+    const val ADD_EXPENSE = "dodaj_wydatek"
+    const val SETTLE = "rozlicz"
+    const val PROFILE = "profil"
 }
 
 @Composable
 fun FairShareApp() {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
-    val current = Destination.entries.firstOrNull { it.route == backStackEntry?.destination?.route }
+    val route = backStackEntry?.destination?.route
+    // Secondary screens keep the tab they belong to highlighted
+    val current = when (route) {
+        Routes.GROUP -> Destination.Grupy
+        Routes.SETTLE -> Destination.Pulpit
+        else -> Destination.entries.firstOrNull { it.route == route }
+    }
+    val fullScreen = route == Routes.ADD_EXPENSE || route == Routes.PROFILE
+    val showFab = route == Routes.GROUP || Destination.entries.any { it.route == route && it.showFab }
+
+    val openTab: (Destination) -> Unit = { destination ->
+        navController.navigate(destination.route) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+    val openProfile: () -> Unit = { navController.navigate(Routes.PROFILE) }
+    val openSettle: () -> Unit = { navController.navigate(Routes.SETTLE) }
+    val back: () -> Unit = { navController.popBackStack() }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            FairShareBottomBar(current) { destination ->
-                navController.navigate(destination.route) {
-                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                    launchSingleTop = true
-                    restoreState = true
-                }
-            }
+            if (!fullScreen) FairShareBottomBar(current, openTab)
         },
         floatingActionButton = {
-            if (current?.showFab == true) AddExpenseFab()
+            if (showFab) AddExpenseFab(onClick = { navController.navigate(Routes.ADD_EXPENSE) })
         },
     ) { innerPadding ->
         NavHost(
@@ -70,10 +96,27 @@ fun FairShareApp() {
             startDestination = Destination.Pulpit.route,
             modifier = Modifier.padding(innerPadding),
         ) {
-            composable(Destination.Pulpit.route) { PulpitScreen() }
-            composable(Destination.Grupy.route) { GrupyScreen() }
-            composable(Destination.Statystyki.route) { StatystykiScreen() }
-            composable(Destination.Aktywnosc.route) { AktywnoscScreen() }
+            composable(Destination.Pulpit.route) { PulpitScreen(onOpenProfile = openProfile, onSettle = openSettle) }
+            composable(Destination.Grupy.route) {
+                GrupyScreen(
+                    onOpenProfile = openProfile,
+                    onOpenGroup = { name -> navController.navigate("grupa/${Uri.encode(name)}") },
+                )
+            }
+            composable(Destination.Statystyki.route) { StatystykiScreen(onOpenProfile = openProfile) }
+            composable(Destination.Aktywnosc.route) { AktywnoscScreen(onOpenProfile = openProfile) }
+
+            composable(Routes.GROUP) { entry ->
+                GrupaScreen(
+                    name = entry.arguments?.getString("name").orEmpty(),
+                    onBack = back,
+                    onSettle = openSettle,
+                    onOpenStats = { openTab(Destination.Statystyki) },
+                )
+            }
+            composable(Routes.ADD_EXPENSE) { DodajWydatekScreen(onClose = back, onSave = back) }
+            composable(Routes.SETTLE) { RozliczScreen(onBack = back) }
+            composable(Routes.PROFILE) { ProfilScreen(onBack = back) }
         }
     }
 }

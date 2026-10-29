@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.ColorDot
+import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.theme.AvatarColors
@@ -54,23 +55,10 @@ private data class ActivityItem(
     val unread: Boolean = false,
 )
 
-private val activitySections = listOf(
-    "Dziś" to listOf(
-        ActivityItem("A", AvatarColors.Pink, "Ania", "dodała „Biedronka”", "Mieszkanie · twój udział 21,85 zł", "2 godz.", unread = true),
-        ActivityItem("O", AvatarColors.Orange, "Ola", "skomentowała „Nocleg”", "Wyjazd Zakopane", "5 godz.", unread = true),
-    ),
-    "Wczoraj" to listOf(
-        ActivityItem("T", AvatarColors.Green, "Tomek", "dodał „Bilety na kolejkę”", "Wyjazd Zakopane · twój udział 42,00 zł", "18:40", unread = true),
-        ActivityItem("K", AvatarColors.Blue, "Kuba", "zmienił „Internet”", "Mieszkanie · 75,00 → 80,00 zł", "11:05"),
-    ),
-    "Wcześniej" to listOf(
-        ActivityItem("Ty", AvatarColors.Teal, "Dodałeś", "„Pizza wieczór”", "Mieszkanie · pożyczyłeś 99,00 zł", "15 paź"),
-        ActivityItem("K", AvatarColors.Blue, "Kuba", "oddał ci 200,00 zł", "Mieszkanie · spłata", "5 paź"),
-    ),
-)
+private val activitySections = emptyList<Pair<String, List<ActivityItem>>>()
 
 @Composable
-fun AktywnoscScreen() {
+fun AktywnoscScreen(onOpenProfile: () -> Unit = {}) {
     // Rows run edge to edge, so horizontal padding is applied per element
     Column(
         modifier = Modifier
@@ -78,7 +66,11 @@ fun AktywnoscScreen() {
             .verticalScroll(rememberScrollState())
             .padding(top = 8.dp, bottom = 24.dp),
     ) {
-        ScreenHeader("Aktywność", modifier = Modifier.padding(horizontal = 16.dp)) {
+        ScreenHeader(
+            "Aktywność",
+            modifier = Modifier.padding(horizontal = 16.dp),
+            onProfileClick = onOpenProfile,
+        ) {
             IconButton(onClick = {}, modifier = Modifier.size(44.dp)) {
                 Icon(
                     Icons.Outlined.DoneAll,
@@ -99,6 +91,9 @@ fun AktywnoscScreen() {
         }
 
         Spacer(Modifier.height(8.dp))
+        if (activitySections.isEmpty()) {
+            EmptyHint("Brak aktywności.", modifier = Modifier.padding(horizontal = 16.dp))
+        }
         activitySections.forEach { (title, items) ->
             Text(
                 title,
