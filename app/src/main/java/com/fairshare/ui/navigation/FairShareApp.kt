@@ -16,10 +16,13 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -35,8 +38,13 @@ import com.fairshare.ui.screens.GrupyScreen
 import com.fairshare.ui.screens.ProfilScreen
 import com.fairshare.ui.screens.PulpitScreen
 import com.fairshare.ui.screens.RozliczScreen
+import com.fairshare.ui.screens.SkanujParagonScreen
 import com.fairshare.ui.screens.StatystykiScreen
+import com.fairshare.ui.screens.summaryLine
+import com.fairshare.ui.viewmodel.AddExpenseViewModel
+import com.fairshare.ui.viewmodel.AppViewModelProvider
 import com.fairshare.ui.viewmodel.GROUP_ID_ARG
+import com.fairshare.ui.viewmodel.ScanResultKeys
 
 enum class Destination(
     val route: String,
@@ -58,6 +66,8 @@ private object Routes {
     const val ADD_EXPENSE = "dodaj_wydatek?$GROUP_ID_ARG={$GROUP_ID_ARG}"
     const val SETTLE = "rozlicz"
     const val PROFILE = "profil"
+    /** Receipt scanner, opened from "Nowy wydatek"; the result goes back to that form. */
+    const val SCAN = "skanuj_paragon"
 }
 
 @Composable
@@ -71,7 +81,7 @@ fun FairShareApp() {
         Routes.SETTLE -> Destination.Pulpit
         else -> Destination.entries.firstOrNull { it.route == route }
     }
-    val fullScreen = route == Routes.ADD_EXPENSE || route == Routes.PROFILE
+    val fullScreen = route == Routes.ADD_EXPENSE || route == Routes.PROFILE || route == Routes.SCAN
     val showFab = route == Routes.GROUP || Destination.entries.any { it.route == route && it.showFab }
 
     val openTab: (Destination) -> Unit = { destination ->
@@ -131,7 +141,40 @@ fun FairShareApp() {
                         defaultValue = -1L
                     },
                 ),
-            ) { DodajWydatekScreen(onClose = back, onSave = back) }
+            ) { entry ->
+                val form: AddExpenseViewModel = viewModel(factory = AppViewModelProvider.Factory)
+                // a receipt read by the scanner comes back through this entry's SavedStateHandle
+                val results = entry.savedStateHandle
+                val scannedTotal by results.getStateFlow<Long?>(ScanResultKeys.TOTAL, null).collectAsStateWithLifecycle()
+                LaunchedEffect(scannedTotal) {
+                    val total = scannedTotal ?: return@LaunchedEffect
+                    form.applyScan(total, results[ScanResultKeys.STORE], results[ScanResultKeys.SUMMARY])
+                    results.remove<String>(ScanResultKeys.STORE)
+                    results.remove<String>(ScanResultKeys.SUMMARY)
+                    results.remove<Long>(ScanResultKeys.TOTAL)
+                }
+                DodajWydatekScreen(
+                    onClose = back,
+                    onSave = back,
+                    onScanReceipt = { navController.navigate(Routes.SCAN) },
+                    viewModel = form,
+                )
+            }
+            composable(Routes.SCAN) {
+                SkanujParagonScreen(
+                    onBack = back,
+                    onUse = { receipt ->
+                        val total = receipt.totalGrosze
+                        val form = navController.previousBackStackEntry?.savedStateHandle
+                        if (total != null && form != null) {
+                            form[ScanResultKeys.STORE] = receipt.store
+                            form[ScanResultKeys.SUMMARY] = receipt.summaryLine()
+                            form[ScanResultKeys.TOTAL] = total
+                        }
+                        navController.popBackStack()
+                    },
+                )
+            }
             composable(Routes.SETTLE) { RozliczScreen(onBack = back) }
             composable(Routes.PROFILE) { ProfilScreen(onBack = back) }
         }
