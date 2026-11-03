@@ -45,7 +45,8 @@ class ReceiptScanner(context: Context) {
     suspend fun scan(photo: Uri, onStage: (String) -> Unit = {}): Outcome {
         onStage("Czytam paragon (ML Kit)…")
         val read = ocr.read(photo)
-        Log.i(TAG, "ML Kit ${read.ms} ms (z próbami obrotu ${read.totalMs} ms), obrót ${read.rotation}°, ${read.text.lines().size} wierszy")
+        Log.i(TAG, "ML Kit ${read.ms} ms (z próbami obrotu ${read.totalMs} ms), obrót ${read.rotation}°, " +
+            "pochylenie linii ${"%.1f".format(read.angle)}°, ${read.text.lines().size} wierszy")
         // the text the rules got, to reproduce a wrong reading in the backend tests (scripts\zapisz-log.bat)
         read.text.chunked(3000).forEach { Log.d(TAG, "OCR:\n$it") }
         if (read.text.isBlank()) throw ScanException("Nie znaleziono tekstu na zdjęciu. Zrób zdjęcie bliżej i przy lepszym świetle.")

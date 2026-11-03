@@ -14,6 +14,8 @@ param(
 )
 # adb and Gradle write normal progress to stderr; with "Stop" Windows PowerShell 5.1 would treat it as an error
 $ErrorActionPreference = "Continue"
+# adb prints UTF-8; without this Windows PowerShell 5.1 decodes it with the console code page and breaks Polish letters
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $log = Join-Path $root "run-phone.log"

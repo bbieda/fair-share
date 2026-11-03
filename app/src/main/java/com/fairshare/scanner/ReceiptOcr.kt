@@ -39,6 +39,8 @@ class ReceiptOcr(private val context: Context) {
         val ms: Long,
         /** Time of all readings (other orientations included). */
         val totalMs: Long,
+        /** Median tilt of the text lines in the winning reading (upright frame), degrees; a skewed photo breaks rows. */
+        val angle: Float,
         /** The photo as ML Kit saw it, upright, for the AI fallback. */
         val upright: Bitmap,
     )
@@ -74,6 +76,7 @@ class ReceiptOcr(private val context: Context) {
             rotation = best.rotation,
             ms = best.ms,
             totalMs = SystemClock.elapsedRealtime() - started,
+            angle = best.medianAngle,
             upright = if (best.rotation == 0) photo else photo.rotated(best.rotation),
         )
     }
