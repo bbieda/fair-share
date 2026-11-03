@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import java.math.BigDecimal
 import java.time.LocalDate
 
 /** "Nowy wydatek" form. Field values live here so they survive rotation. */
@@ -40,6 +41,9 @@ class AddExpenseViewModel(
     var participantIds by mutableStateOf<Set<Long>>(emptySet()); private set
     var category by mutableStateOf<ExpenseCategory?>(null)
     var date by mutableStateOf(LocalDate.now())
+
+    /** "Biedronka · 12 pozycji" after a scan, shown in the "Paragon" row. */
+    var scanSummary by mutableStateOf<String?>(null); private set
 
     var error by mutableStateOf<String?>(null); private set
     var saving by mutableStateOf(false); private set
@@ -91,6 +95,19 @@ class AddExpenseViewModel(
 
     fun updateAmount(input: String) {
         amount = input.filter { it.isDigit() || it == ',' || it == '.' }
+        error = null
+    }
+
+    /**
+     * Fills the form from a scanned receipt: the amount to pay, the store as the description (unless typed already)
+     * and "Zakupy" when no category was picked. The expense is still split equally; splitting by item is next.
+     */
+    fun applyScan(totalGrosze: Long, store: String?, summary: String?) {
+        if (totalGrosze <= 0) return
+        amount = BigDecimal.valueOf(totalGrosze).movePointLeft(2).setScale(2).toPlainString().replace('.', ',')
+        if (description.isBlank()) description = store?.takeIf { it.isNotBlank() } ?: "Zakupy"
+        if (category == null) category = ExpenseCategory.GROCERIES
+        scanSummary = summary
         error = null
     }
 

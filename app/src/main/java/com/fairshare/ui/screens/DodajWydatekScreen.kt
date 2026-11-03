@@ -74,6 +74,7 @@ import java.time.ZoneOffset
 fun DodajWydatekScreen(
     onClose: () -> Unit = {},
     onSave: () -> Unit = {},
+    onScanReceipt: () -> Unit = {},
     viewModel: AddExpenseViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val vm = viewModel
@@ -248,9 +249,10 @@ fun DodajWydatekScreen(
             )
             ListRow(
                 Icons.Outlined.PhotoCamera,
-                "Dodaj zdjęcie",
+                vm.scanSummary ?: "Zeskanuj paragon",
                 overline = "Paragon",
-                headlineColor = MaterialTheme.colorScheme.primary,
+                headlineColor = if (vm.scanSummary == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                onClick = onScanReceipt,
             )
 
             vm.error?.let {
