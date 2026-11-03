@@ -99,9 +99,10 @@ class ReceiptOcr(private val context: Context) {
     /** Decodes the photo with its EXIF orientation applied, at most [MAX_SIDE] px on the long side. */
     private fun loadUpright(uri: Uri): Bitmap {
         val resolver = context.contentResolver
+        // with inJustDecodeBounds decodeStream always returns null and only fills outWidth/outHeight
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw ScanException("Nie można otworzyć zdjęcia.")
+        val opened = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds); true } ?: false
+        if (!opened) throw ScanException("Nie można otworzyć zdjęcia.")
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw ScanException("To nie wygląda na zdjęcie (JPG/PNG).")
         var sample = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_SIDE) sample *= 2
