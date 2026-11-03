@@ -26,17 +26,69 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fairshare.ui.components.BackHeader
+import com.fairshare.ui.components.ConfirmDialog
 import com.fairshare.ui.components.ListRow
+import com.fairshare.ui.components.TextInputDialog
 import com.fairshare.ui.theme.FairShareTheme
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.ProfileViewModel
 
 @Composable
-fun ProfilScreen(onBack: () -> Unit = {}) {
+fun ProfilScreen(
+    onBack: () -> Unit = {},
+    viewModel: ProfileViewModel = viewModel(factory = AppViewModelProvider.Factory),
+) {
+    val me by viewModel.me.collectAsStateWithLifecycle()
+    var editingName by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+
+    ProfilContent(
+        name = me?.name ?: "",
+        onBack = onBack,
+        onEditName = { editingName = true },
+        onDeleteAll = { confirmDelete = true },
+    )
+
+    if (editingName) {
+        TextInputDialog(
+            title = "Twoje imię",
+            label = "Imię",
+            confirmLabel = "Zapisz",
+            initialValue = me?.name.orEmpty(),
+            onDismiss = { editingName = false },
+            onConfirm = viewModel::rename,
+        )
+    }
+    if (confirmDelete) {
+        ConfirmDialog(
+            title = "Usunąć wszystkie dane?",
+            message = "Grupy, osoby i wydatki zostaną trwale usunięte z tego telefonu.",
+            confirmLabel = "Usuń wszystko",
+            onDismiss = { confirmDelete = false },
+            onConfirm = viewModel::deleteAllData,
+        )
+    }
+}
+
+@Composable
+private fun ProfilContent(
+    name: String,
+    onBack: () -> Unit = {},
+    onEditName: () -> Unit = {},
+    onDeleteAll: () -> Unit = {},
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -65,12 +117,12 @@ fun ProfilScreen(onBack: () -> Unit = {}) {
                 )
             }
             Text(
-                "Twoje imię",
+                name.ifBlank { "Twoje imię" },
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 12.dp),
             )
-            TextButton(onClick = {}) { Text("Edytuj imię i zdjęcie") }
+            TextButton(onClick = onEditName) { Text("Edytuj imię") }
         }
 
         SettingsSection("Rozliczenia")
@@ -91,6 +143,7 @@ fun ProfilScreen(onBack: () -> Unit = {}) {
             iconTint = MaterialTheme.colorScheme.error,
             headlineColor = MaterialTheme.colorScheme.error,
             showChevron = false,
+            onClick = onDeleteAll,
         )
     }
 }
@@ -111,6 +164,6 @@ private fun SettingsSection(title: String) {
 @Composable
 private fun ProfilPreview() {
     FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { ProfilScreen() }
+        Surface(color = MaterialTheme.colorScheme.background) { ProfilContent(name = "Oskar") }
     }
 }
