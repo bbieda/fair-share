@@ -1,6 +1,5 @@
 package com.fairshare.ui.navigation
 
-import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
@@ -22,9 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.navArgument
 import androidx.navigation.compose.rememberNavController
 import com.fairshare.ui.components.AddExpenseFab
 import com.fairshare.ui.screens.AktywnoscScreen
@@ -35,6 +36,7 @@ import com.fairshare.ui.screens.ProfilScreen
 import com.fairshare.ui.screens.PulpitScreen
 import com.fairshare.ui.screens.RozliczScreen
 import com.fairshare.ui.screens.StatystykiScreen
+import com.fairshare.ui.viewmodel.GROUP_ID_ARG
 
 enum class Destination(
     val route: String,
@@ -51,8 +53,9 @@ enum class Destination(
 
 /** Screens opened from the tabs; they sit on top of the tab's back stack. */
 private object Routes {
-    const val GROUP = "grupa/{name}"
-    const val ADD_EXPENSE = "dodaj_wydatek"
+    const val GROUP = "grupa/{$GROUP_ID_ARG}"
+    /** groupId is optional: -1 means "pick the group in the form". */
+    const val ADD_EXPENSE = "dodaj_wydatek?$GROUP_ID_ARG={$GROUP_ID_ARG}"
     const val SETTLE = "rozlicz"
     const val PROFILE = "profil"
 }
@@ -88,7 +91,11 @@ fun FairShareApp() {
             if (!fullScreen) FairShareBottomBar(current, openTab)
         },
         floatingActionButton = {
-            if (showFab) AddExpenseFab(onClick = { navController.navigate(Routes.ADD_EXPENSE) })
+            if (showFab) {
+                // From a group screen the form opens with that group already selected
+                val groupId = if (route == Routes.GROUP) backStackEntry?.arguments?.getLong(GROUP_ID_ARG) else null
+                AddExpenseFab(onClick = { navController.navigate(addExpenseRoute(groupId)) })
+            }
         },
     ) { innerPadding ->
         NavHost(
@@ -100,26 +107,39 @@ fun FairShareApp() {
             composable(Destination.Grupy.route) {
                 GrupyScreen(
                     onOpenProfile = openProfile,
-                    onOpenGroup = { name -> navController.navigate("grupa/${Uri.encode(name)}") },
+                    onOpenGroup = { groupId -> navController.navigate("grupa/$groupId") },
                 )
             }
             composable(Destination.Statystyki.route) { StatystykiScreen(onOpenProfile = openProfile) }
             composable(Destination.Aktywnosc.route) { AktywnoscScreen(onOpenProfile = openProfile) }
 
-            composable(Routes.GROUP) { entry ->
+            composable(
+                Routes.GROUP,
+                arguments = listOf(navArgument(GROUP_ID_ARG) { type = NavType.LongType }),
+            ) {
                 GrupaScreen(
-                    name = entry.arguments?.getString("name").orEmpty(),
                     onBack = back,
                     onSettle = openSettle,
                     onOpenStats = { openTab(Destination.Statystyki) },
                 )
             }
-            composable(Routes.ADD_EXPENSE) { DodajWydatekScreen(onClose = back, onSave = back) }
+            composable(
+                Routes.ADD_EXPENSE,
+                arguments = listOf(
+                    navArgument(GROUP_ID_ARG) {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    },
+                ),
+            ) { DodajWydatekScreen(onClose = back, onSave = back) }
             composable(Routes.SETTLE) { RozliczScreen(onBack = back) }
             composable(Routes.PROFILE) { ProfilScreen(onBack = back) }
         }
     }
 }
+
+private fun addExpenseRoute(groupId: Long?): String =
+    if (groupId != null && groupId > 0) "dodaj_wydatek?$GROUP_ID_ARG=$groupId" else "dodaj_wydatek"
 
 @Composable
 private fun FairShareBottomBar(
