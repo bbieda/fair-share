@@ -42,6 +42,17 @@ Gdy coś jest źle odczytane albo aplikacja się wysypie: dwuklik **`scripts\zap
 trafią czasy, tekst z ML Kit, odczyt reguł i Gemini oraz błędy. Z tego tekstu da się dopisać przypadek testowy
 do reguł.
 
+## Zapisane skany (tylko wersja debug)
+
+Wersja debug (ta budowana skryptem i z Android Studio) zapisuje każdy skan na telefonie, żeby błędny odczyt dało
+się obejrzeć obok logu: `Android/data/com.fairshare/files/skany/<data_godzina>/` z plikami `zdjecie.jpg`,
+`ocr.txt` (tekst z ML Kit, który dostały reguły) i `wynik.txt` (czasy, odczyt reguł i Gemini, błędy). Zostaje 50
+ostatnich. Ekran wyniku pokazuje nazwę folderu. Galeria tych zdjęć nie widzi, ale przez kabel USB w trybie
+przesyłania plików są widoczne z komputera.
+
+`scripts\zapisz-log.bat` kopiuje nowe skany do folderu `skany\` w projekcie (jest w `.gitignore`, bo to zdjęcia
+prawdziwych paragonów). Wersja release niczego nie zapisuje (`SAVE_SCANS` w `app/build.gradle.kts`).
+
 ## Klucz Gemini
 
 Bez klucza skaner działa tylko z ML Kit + regułami (ekran o tym mówi). Klucz z https://aistudio.google.com/apikey
@@ -70,6 +81,7 @@ kontrolna i przeliczanie odpowiedzi modelu (rabaty, kaucje, rabat na cały parag
 | `scanner/GeminiReceiptReader.kt` | wywołanie Gemini, model zapasowy, runda poprawki |
 | `scanner/ReceiptPrompt.kt` | prompt i prośba o poprawkę (identyczne z backendem) |
 | `scanner/ScannedReceipt.kt` | wynik w groszach, suma kontrolna, przeliczanie linii modelu |
+| `scanner/ScanArchive.kt` | wersja debug: zapis zdjęcia i odczytu każdego skanu |
 | `ui/screens/SkanujParagonScreen.kt`, `ui/viewmodel/ScanViewModel.kt` | ekran skanera |
 
 ## Co dalej

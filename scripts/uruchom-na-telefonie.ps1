@@ -2,6 +2,7 @@
 #
 #   scripts\uruchom-na-telefonie.bat          double-click: build + install + start
 #   scripts\zapisz-log.bat                    after a test: saves the app's log from the phone to phone-log.txt
+#                                             and copies new scans (photo + reading, debug builds) to skany\
 #   powershell -File scripts\uruchom-na-telefonie.ps1 -NoBuild    install the last build again
 #   powershell -File scripts\uruchom-na-telefonie.ps1 -Clean      clean build
 #
@@ -79,6 +80,17 @@ if ($SaveLog) {
     & $adb -s $serial logcat -d -v threadtime 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match $pattern } |
         Out-File $out -Encoding utf8
     Write-Host "Zapisano log telefonu: $out ($((Get-Content $out).Count) linii)."
+
+    # photos and readings kept by debug builds (scanner/ScanArchive.kt); only the ones not copied yet
+    $remote = "/sdcard/Android/data/com.fairshare/files/skany"
+    $local = Join-Path $root "skany"
+    $names = @(& $adb -s $serial shell "ls $remote 2>/dev/null" | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $new = @($names | Where-Object { -not (Test-Path (Join-Path $local $_)) })
+    if ($new.Count -gt 0) {
+        New-Item -ItemType Directory -Force $local | Out-Null
+        foreach ($name in $new) { & $adb -s $serial pull "$remote/$name" $local *> $null }
+    }
+    Write-Host "Skany na telefonie: $($names.Count), skopiowano nowych: $($new.Count) -> $local"
     exit 0
 }
 

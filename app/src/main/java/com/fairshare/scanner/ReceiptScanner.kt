@@ -38,6 +38,10 @@ class ReceiptScanner(context: Context) {
         val aiModel: String? = null,
         val aiMs: Long? = null,
         val aiError: String? = null,
+        /** Gemini's reading, when it was asked (also when the rules' reading was kept). */
+        val byAi: ScannedReceipt? = null,
+        /** Median tilt of the text lines, degrees. */
+        val textAngle: Float = 0f,
     ) {
         val totalMs: Long get() = ocrTotalMs + rulesMs + (aiMs ?: 0)
     }
@@ -55,7 +59,7 @@ class ReceiptScanner(context: Context) {
         val byRules = ScannedReceipt.fromRules(RuleBasedReceiptParser.parse(read.text))
         val rulesMs = SystemClock.elapsedRealtime() - rulesStarted
         Log.i(TAG, "Reguły $rulesMs ms: ${byRules.describe()}")
-        val base = Outcome(byRules, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs)
+        val base = Outcome(byRules, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs, textAngle = read.angle)
         if (byRules.sumMatches || gemini == null) return base
 
         onStage("Suma się nie zgadza, doczytuję zdjęcie przez Gemini…")
@@ -64,10 +68,16 @@ class ReceiptScanner(context: Context) {
             Log.i(TAG, "Gemini ${ai.model} ${ai.ms} ms, zapytań ${ai.attempts}: ${ai.receipt.describe()}")
             // the AI's answer wins unless it is further from adding up than the rules
             val receipt = if (ai.receipt.items.isNotEmpty() && ai.receipt.gap <= byRules.gap) ai.receipt else byRules
-            Outcome(receipt, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs, ai.model, ai.ms)
+            Outcome(
+                receipt, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs,
+                aiModel = ai.model, aiMs = ai.ms, byAi = ai.receipt, textAngle = read.angle,
+            )
         } catch (e: ScanException) {
             Log.w(TAG, "Gemini: ${e.message}")
-            Outcome(byRules, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs, aiError = e.message)
+            Outcome(
+                byRules, byRules, read.text, read.rotation, read.ms, read.totalMs, rulesMs,
+                aiError = e.message, textAngle = read.angle,
+            )
         }
     }
 
