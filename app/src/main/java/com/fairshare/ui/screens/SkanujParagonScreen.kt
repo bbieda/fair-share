@@ -110,10 +110,11 @@ fun SkanujParagonScreen(
                 is ScanViewModel.State.Working -> Working(state.stage)
                 is ScanViewModel.State.Failed -> {
                     Banner(Icons.Outlined.ErrorOutline, state.message, MaterialTheme.colorScheme.error)
+                    state.savedAs?.let { SavedNote(it) }
                     Spacer(Modifier.height(16.dp))
                     PhotoButtons(openCamera, openGallery)
                 }
-                is ScanViewModel.State.Done -> ScanResult(state.outcome, vm.aiAvailable)
+                is ScanViewModel.State.Done -> ScanResult(state.outcome, state.savedAs, vm.aiAvailable)
             }
         }
 
@@ -228,7 +229,7 @@ private fun Working(stage: String) {
 }
 
 @Composable
-private fun ScanResult(outcome: ReceiptScanner.Outcome, aiAvailable: Boolean) {
+private fun ScanResult(outcome: ReceiptScanner.Outcome, savedAs: String?, aiAvailable: Boolean) {
     val receipt = outcome.receipt
     var showOcr by remember { mutableStateOf(false) }
 
@@ -271,6 +272,7 @@ private fun ScanResult(outcome: ReceiptScanner.Outcome, aiAvailable: Boolean) {
                 },
             )
             if (outcome.rotation != 0) InfoLine("Obrót", "zdjęcie odczytane po obróceniu o ${outcome.rotation}°")
+            savedAs?.let { InfoLine("Zapis", "skany/$it (wersja debug)") }
 
             val byRules = outcome.byRules
             when {
@@ -400,6 +402,17 @@ private fun Banner(icon: ImageVector, text: String, color: Color) {
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
         Text(text, style = MaterialTheme.typography.bodyMedium, color = color)
     }
+}
+
+/** Debug builds: where the photo and its reading were saved (scripts\zapisz-log.bat copies them to the PC). */
+@Composable
+private fun SavedNote(id: String) {
+    Text(
+        "Zdjęcie i odczyt zapisane w skany/$id (wersja debug).",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 8.dp),
+    )
 }
 
 @Composable

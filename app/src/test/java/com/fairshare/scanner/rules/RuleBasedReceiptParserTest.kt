@@ -128,6 +128,26 @@ class RuleBasedReceiptParserTest {
     }
 
     @Test
+    fun `barcode after a misread VAT letter is dropped, a size on its own name line is kept, 0 inside words is O`() {
+        val r = RuleBasedReceiptParser.parse(
+            """
+            PARAGON FISKALNY
+            4 5411183157255 AKRYL SOUDAL EXPRESS 280 M
+            1SZT#13,78= 13,78 A
+            A 5059340989907 FOLIA 0CHRONNA MEBLOWA 4X5
+            1SZT*15,98= 15,98 A
+            A 3663602932451 TAŚMA MALARSKA 48 MM X 50
+            1SZT*7,77= 7,77 A
+            Sprzed. opod. PTU A
+            SUMA PLN   37,53
+            """.trimIndent()
+        )
+        assertEquals(listOf("Akryl soudal express 280 m", "Folia ochronna meblowa 4x5", "Taśma malarska 48 mm x 50"), r.items.map { it.name })
+        assertEquals(listOf(1378L, 1598L, 777L), r.items.map { it.priceGrosze })
+        assertEquals(3753L, r.totalGrosze)
+    }
+
+    @Test
     fun `card terminal slip has a total but no items`() {
         val r = RuleBasedReceiptParser.parse(
             """

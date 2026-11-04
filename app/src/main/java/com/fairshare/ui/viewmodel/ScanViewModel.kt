@@ -9,7 +9,9 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.fairshare.BuildConfig
 import com.fairshare.scanner.ReceiptScanner
+import com.fairshare.scanner.ScanArchive
 import com.fairshare.scanner.ScanException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -30,12 +32,15 @@ class ScanViewModel(
     private val savedState: SavedStateHandle,
 ) : AndroidViewModel(application) {
     private val scanner = ReceiptScanner(application)
+    /** Debug builds keep every scanned photo with its reading (ScanArchive); release builds keep nothing. */
+    private val archive: ScanArchive? = if (BuildConfig.SAVE_SCANS) ScanArchive(application) else null
 
     sealed interface State {
         data object Idle : State
         data class Working(val stage: String) : State
-        class Done(val outcome: ReceiptScanner.Outcome) : State
-        data class Failed(val message: String) : State
+        /** [savedAs]: folder of the saved photo and reading in debug builds ("2026-11-04_18-05-12"). */
+        class Done(val outcome: ReceiptScanner.Outcome, val savedAs: String? = null) : State
+        data class Failed(val message: String, val savedAs: String? = null) : State
     }
 
     var state by mutableStateOf<State>(State.Idle); private set
@@ -66,17 +71,22 @@ class ScanViewModel(
         if (state is State.Working) return
         state = State.Working("Wczytuję zdjęcie…")
         viewModelScope.launch {
-            state = try {
-                State.Done(scanner.scan(uri) { stage -> state = State.Working(stage) })
+            var outcome: ReceiptScanner.Outcome? = null
+            val failure: String? = try {
+                outcome = scanner.scan(uri) { stage -> state = State.Working(stage) }
+                null
             } catch (e: ScanException) {
-                State.Failed(e.message ?: "Nie udało się odczytać paragonu.")
+                e.message ?: "Nie udało się odczytać paragonu."
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OutOfMemoryError) {
-                State.Failed("Zdjęcie jest za duże dla pamięci telefonu.")
+                "Zdjęcie jest za duże dla pamięci telefonu."
             } catch (e: Exception) {
-                State.Failed("Błąd: ${e.javaClass.simpleName}: ${e.message}")
+                "Błąd: ${e.javaClass.simpleName}: ${e.message}"
             }
+            val savedAs = archive?.save(uri, outcome, failure)
+            val result = outcome
+            state = if (result != null) State.Done(result, savedAs) else State.Failed(failure ?: "Nieznany błąd.", savedAs)
         }
     }
 

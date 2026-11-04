@@ -8,7 +8,8 @@ import kotlin.math.roundToLong
  * Reads a Polish receipt from OCR text (ML Kit / Tesseract) with plain rules – no language model.
  *
  * Same file as backend/src/main/kotlin/paragon/rules/RuleBasedReceiptParser.kt in the benchmark (only the package
- * differs): rules tuned on the dev receipts, frozen before the test run of 28.10.2026. Change it in both places.
+ * differs): rules tuned on the dev receipts, frozen before the test run of 28.10.2026,
+ * later only name cleanup (4.11). Change it in both places.
  *
  * Uses only the Kotlin standard library and java.text, so the same file can run in the Android app
  * next to ML Kit. The receipt's own checksums (items must add up to the total) are used to spot and
@@ -63,7 +64,8 @@ object RuleBasedReceiptParser {
 
     // ---------------------------------------------------------------- items
 
-    private class Draft(val rawName: String, val gross: Long, val qty: Double?, val unit: Long?) {
+    /** [nameOnOwnLine]: the name was printed on the line above the price (Castorama, PYZIK), not before the price. */
+    private class Draft(val rawName: String, val gross: Long, val qty: Double?, val unit: Long?, val nameOnOwnLine: Boolean = false) {
         var discounts = 0L
         var deposits = 0L
         /** Price after discount printed on its own line (Lidl, Biedronka). */
@@ -81,8 +83,10 @@ object RuleBasedReceiptParser {
             net?.let { it + deposits },
         ) - price()
 
+        fun cleanedName(): String = cleanName(rawName, nameOnOwnLine)
+
         fun displayName(): String {
-            val name = cleanName(rawName).ifEmpty { "Pozycja" }
+            val name = cleanedName().ifEmpty { "Pozycja" }
             val q = qty
             return if (q != null && q >= 2 && q == Math.floor(q)) "$name (${q.toInt()} szt.)" else name
         }
@@ -143,7 +147,7 @@ object RuleBasedReceiptParser {
 
             val nameOnLine = LETTER_WORD.containsMatchIn(prefix.replace(QTY, " ").replace(QTY_UNITS, " "))
             val name = if (nameOnLine) prefix else pendingName.orEmpty()
-            drafts += Draft(name, amount.grosze, qty?.first, qty?.second)
+            drafts += Draft(name, amount.grosze, qty?.first, qty?.second, nameOnOwnLine = !nameOnLine && pendingName != null)
             pendingName = null
         }
         return drafts
@@ -170,13 +174,13 @@ object RuleBasedReceiptParser {
         if (diff == 0L || drafts.isEmpty()) return
         for (d in drafts) {
             val fix = d.alternatives().firstOrNull { it - d.price() == diff } ?: continue
-            notes += "${cleanName(d.rawName)}: ${fmt(d.price())} → ${fmt(fix)} (items now add up to the total)"
+            notes += "${d.cleanedName()}: ${fmt(d.price())} → ${fmt(fix)} (items now add up to the total)"
             d.override = fix
             return
         }
         // one item on the receipt: it costs what the receipt says, whatever OCR made of the item line
         if (drafts.size == 1 && target > 0) {
-            notes += "${cleanName(drafts[0].rawName)}: ${fmt(drafts[0].price())} → ${fmt(target)} (only item, takes the total)"
+            notes += "${drafts[0].cleanedName()}: ${fmt(drafts[0].price())} → ${fmt(target)} (only item, takes the total)"
             drafts[0].override = target
             return
         }
@@ -298,21 +302,39 @@ object RuleBasedReceiptParser {
         return s
     }
 
-    private fun cleanName(raw: String): String {
+    /** [ownLine]: the name had a line to itself, so nothing after it is a price or quantity. */
+    private fun cleanName(raw: String, ownLine: Boolean = false): String {
         var s = raw.replace(QTY, " ").replace(Regex("""\s+"""), " ").trim()
         val tokens = s.split(' ').filter { it.isNotBlank() }.toMutableList()
-        // leading: VAT letter, EAN / article codes, "55:"
-        while (tokens.isNotEmpty() && (tokens[0].matches(Regex("""[A-G]|\d{4,}:?|\d{1,4}:|:""")))) tokens.removeAt(0)
-        // trailing: VAT/group letters (A, F, X…), numbers, prices and "1I:12.49" – but keep "500ml", "4-pak"
-        while (tokens.isNotEmpty() && tokens.last().let { t -> t.length == 1 || !t.any { it.isLetter() } || PRICE_IN_TOKEN.containsMatchIn(t) || ':' in t || '*' in t }) {
-            tokens.removeAt(tokens.lastIndex)
+        // leading: VAT letter, EAN / article codes, "55:"; also a VAT letter OCR read as something else ("4 5411183157255")
+        while (tokens.isNotEmpty() && (tokens[0].matches(LEADING_CODE) || (tokens[0].length == 1 && tokens.getOrNull(1)?.matches(EAN) == true))) {
+            tokens.removeAt(0)
+        }
+        // trailing: VAT/group letters (A, F, X…), numbers, prices and "1I:12.49" – but keep "500ml", "4-pak", and on a
+        // name line of its own a size the printer cut short: "AKRYL ... 280 M", "TAŚMA ... 48 MM X 50"
+        if (!(ownLine && endsWithSize(tokens))) {
+            while (tokens.isNotEmpty() && tokens.last().let { t -> t.length == 1 || !t.any { it.isLetter() } || PRICE_IN_TOKEN.containsMatchIn(t) || ':' in t || '*' in t }) {
+                tokens.removeAt(tokens.lastIndex)
+            }
         }
         s = tokens.joinToString(" ").trim(' ', ':', '-', '*', '|')
+        // OCR reads O as 0 inside words: "0CHRONNA" -> "OCHRONNA", "0liwki" -> "Oliwki" (not in "0,5L", "500ml", "10x")
+        s = ZERO_IN_WORD.replace(s) { m ->
+            if (m.range.first > 0 && s.getOrNull(m.range.last + 1)?.isLowerCase() == true) "o" else "O"
+        }
         val letters = s.filter { it.isLetter() }
         if (letters.length >= 4 && letters.count { it.isUpperCase() } > letters.length * 0.7) {
             s = s.lowercase().replaceFirstChar { it.uppercase() }
         }
         return s
+    }
+
+    /** "... 280 M" or "... 48 MM X 50": a number with a unit at the end, optionally "x <number>" after it. */
+    private fun endsWithSize(tokens: List<String>): Boolean {
+        val n = tokens.size
+        fun at(i: Int, r: Regex) = i in 0 until n && tokens[i].matches(r)
+        return (at(n - 2, SIZE_NUMBER) && at(n - 1, SIZE_UNIT)) ||
+            (at(n - 4, SIZE_NUMBER) && at(n - 3, SIZE_UNIT) && at(n - 2, SIZE_TIMES) && at(n - 1, SIZE_NUMBER))
     }
 
     /** Lowercase without Polish/other diacritics, for keyword matching that tolerates OCR ("OPUŠT", "PŁATNOŠCI"). */
@@ -328,6 +350,13 @@ object RuleBasedReceiptParser {
     private val QTY = Regex("""(\d{1,4}(?:[.,]\d{1,3})?)\s*(?:szt\.?|kg)?\s*[x×*:-]\s*(\d{1,5}[.,]\d{1,2})""", RegexOption.IGNORE_CASE)
     private val QTY_UNITS = Regex("""(?i)szt\.?|kg""")
     private val PRICE_IN_TOKEN = Regex("""\d[.,]\d{2}""")
+    private val LEADING_CODE = Regex("""[A-G]|\d{4,}:?|\d{1,4}:|:""")
+    /** Barcode (EAN-8/13) or long article number. */
+    private val EAN = Regex("""\d{8,}:?""")
+    private val SIZE_NUMBER = Regex("""\d{1,5}(?:[.,]\d{1,3})?""")
+    private val SIZE_UNIT = Regex("""(?i)m|ml|l|cl|kg|mm|cm|m2|m3""")
+    private val SIZE_TIMES = Regex("""[xX×]""")
+    private val ZERO_IN_WORD = Regex("""(?<=\p{L})0(?=\p{L})|(?<![\p{L}\d.,])0(?=\p{L}{3,})""")
     /** "PARAGON FISKALNY", also when OCR mangles it ("ooGON FISKALNY", "FISKALRY") – but not "NIEFISKALNY". */
     private val FISCAL_HEADER = Regex("""paragon\s*fisk|(?<!nie)fiskal""")
     private val LETTER_WORD = Regex("""\p{L}{3,}""")
