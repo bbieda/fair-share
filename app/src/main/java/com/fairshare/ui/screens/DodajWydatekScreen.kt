@@ -3,6 +3,8 @@ package com.fairshare.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,38 +27,61 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.model.ExpenseCategory
+import com.fairshare.data.model.Money
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.BackHeader
 import com.fairshare.ui.components.ListRow
-import com.fairshare.ui.theme.FairShareTheme
+import com.fairshare.ui.components.dayLabel
+import com.fairshare.ui.components.icon
+import com.fairshare.ui.components.labelOrDefault
+import com.fairshare.ui.components.plural
+import com.fairshare.ui.viewmodel.AddExpenseViewModel
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DodajWydatekScreen(
     onClose: () -> Unit = {},
     onSave: () -> Unit = {},
+    onScanReceipt: () -> Unit = {},
+    viewModel: AddExpenseViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
-    var amount by rememberSaveable { mutableStateOf("") }
-    var description by rememberSaveable { mutableStateOf("") }
+    val vm = viewModel
+    var groupMenuOpen by remember { mutableStateOf(false) }
+    var payerMenuOpen by remember { mutableStateOf(false) }
+    var categoryMenuOpen by remember { mutableStateOf(false) }
+    var datePickerOpen by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize()) {
         Column(
@@ -67,9 +92,44 @@ fun DodajWydatekScreen(
         ) {
             BackHeader("Nowy wydatek", onClose, navIcon = Icons.Outlined.Close, navLabel = "Zamknij")
 
+            // ---- Group ----
             FieldLabel("Z kim", Modifier.padding(top = 12.dp))
-            AppFilterChip("Wybierz grupę", selected = false, onClick = {}, dropdown = true)
+            Box {
+                AppFilterChip(
+                    vm.selectedGroup?.name ?: "Wybierz grupę",
+                    selected = false,
+                    onClick = { groupMenuOpen = true },
+                    dropdown = true,
+                )
+                DropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
+                    if (vm.groups.isEmpty()) {
+                        DropdownMenuItem(
+                            text = { Text("Najpierw utwórz grupę w zakładce Grupy") },
+                            onClick = { groupMenuOpen = false },
+                            enabled = false,
+                        )
+                    }
+                    vm.groups.forEach { group ->
+                        DropdownMenuItem(
+                            text = { Text(group.name) },
+                            onClick = {
+                                vm.selectGroup(group.id)
+                                groupMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+            if (vm.groupsLoaded && vm.groups.isEmpty()) {
+                Text(
+                    "Nie masz jeszcze żadnej grupy. Utwórz ją w zakładce Grupy.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
+            // ---- Amount ----
             FieldLabel("Kwota", Modifier.padding(top = 16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val amountStyle = TextStyle(
@@ -79,15 +139,15 @@ fun DodajWydatekScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 BasicTextField(
-                    value = amount,
-                    onValueChange = { input -> amount = input.filter { it.isDigit() || it == ',' || it == '.' } },
+                    value = vm.amount,
+                    onValueChange = vm::updateAmount,
                     textStyle = amountStyle,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     modifier = Modifier.weight(1f),
                     decorationBox = { field ->
-                        if (amount.isEmpty()) {
+                        if (vm.amount.isEmpty()) {
                             Text("0,00", style = amountStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
                         }
                         field()
@@ -98,31 +158,116 @@ fun DodajWydatekScreen(
             HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.primary)
 
             TextField(
-                value = description,
-                onValueChange = { description = it },
+                value = vm.description,
+                onValueChange = { vm.description = it },
                 label = { Text("Opis") },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 20.dp),
             )
 
             Spacer(Modifier.height(16.dp))
-            ListRow(Icons.Outlined.AccountBalanceWallet, "Ty", overline = "Płacił")
-            ListRow(Icons.Outlined.Percent, "Równo", overline = "Podział")
-            ListRow(Icons.AutoMirrored.Outlined.Label, "Wybierz kategorię", overline = "Kategoria")
-            ListRow(Icons.Outlined.CalendarToday, "Dziś", overline = "Data")
+
+            // ---- Payer ----
+            Box {
+                ListRow(
+                    Icons.Outlined.AccountBalanceWallet,
+                    vm.payer?.let { if (it.isMe) "Ty" else it.name } ?: "Wybierz osobę",
+                    overline = "Płacił",
+                    onClick = { if (vm.members.isNotEmpty()) payerMenuOpen = true },
+                )
+                DropdownMenu(expanded = payerMenuOpen, onDismissRequest = { payerMenuOpen = false }) {
+                    vm.members.forEach { member ->
+                        DropdownMenuItem(
+                            text = { Text(if (member.isMe) "Ty" else member.name) },
+                            onClick = {
+                                vm.payerId = member.id
+                                payerMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+
+            // ---- Split ----
+            val share = vm.sharePreview
+            ListRow(
+                Icons.Outlined.Percent,
+                when {
+                    vm.participantIds.isEmpty() -> "Zaznacz osoby poniżej"
+                    share != null -> "Równo, po ${Money.format(share)}"
+                    else -> "Równo, " + plural(vm.participantIds.size, "osoba", "osoby", "osób")
+                },
+                overline = "Podział",
+                showChevron = false,
+            )
+            if (vm.members.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
+                ) {
+                    vm.members.forEach { member ->
+                        AppFilterChip(
+                            if (member.isMe) "Ty" else member.name,
+                            selected = member.id in vm.participantIds,
+                            onClick = { vm.toggleParticipant(member.id) },
+                        )
+                    }
+                }
+            }
+
+            // ---- Category ----
+            Box {
+                ListRow(
+                    vm.category?.icon ?: Icons.AutoMirrored.Outlined.Label,
+                    vm.category?.label ?: "Wybierz kategorię",
+                    overline = "Kategoria",
+                    onClick = { categoryMenuOpen = true },
+                )
+                DropdownMenu(expanded = categoryMenuOpen, onDismissRequest = { categoryMenuOpen = false }) {
+                    (ExpenseCategory.entries + listOf<ExpenseCategory?>(null)).forEach { category ->
+                        DropdownMenuItem(
+                            text = { Text(category.labelOrDefault) },
+                            leadingIcon = { Icon(category.icon, contentDescription = null) },
+                            onClick = {
+                                vm.category = category
+                                categoryMenuOpen = false
+                            },
+                        )
+                    }
+                }
+            }
+
+            // ---- Date ----
+            ListRow(
+                Icons.Outlined.CalendarToday,
+                dayLabel(vm.date),
+                overline = "Data",
+                onClick = { datePickerOpen = true },
+            )
             ListRow(
                 Icons.Outlined.PhotoCamera,
-                "Dodaj zdjęcie",
+                vm.scanSummary ?: "Zeskanuj paragon",
                 overline = "Paragon",
-                headlineColor = MaterialTheme.colorScheme.primary,
+                headlineColor = if (vm.scanSummary == null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground,
+                onClick = onScanReceipt,
             )
+
+            vm.error?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
 
         Button(
-            onClick = onSave,
-            enabled = amount.isNotEmpty(),
+            onClick = { vm.save(onSaved = onSave) },
+            enabled = vm.amount.isNotEmpty() && vm.selectedGroupId != null && !vm.saving,
             shape = RoundedCornerShape(28.dp),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -135,6 +280,43 @@ fun DodajWydatekScreen(
             Text("Zapisz wydatek", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
         }
     }
+
+    if (datePickerOpen) {
+        ExpenseDatePicker(
+            initial = vm.date,
+            onDismiss = { datePickerOpen = false },
+            onPicked = { vm.date = it },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExpenseDatePicker(
+    initial: LocalDate,
+    onDismiss: () -> Unit,
+    onPicked: (LocalDate) -> Unit,
+) {
+    // DatePicker works in UTC milliseconds
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = initial.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let { millis ->
+                    onPicked(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                }
+                onDismiss()
+            }) { Text("OK") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Anuluj") }
+        },
+    ) {
+        DatePicker(state = state)
+    }
 }
 
 @Composable
@@ -145,12 +327,4 @@ private fun FieldLabel(text: String, modifier: Modifier = Modifier) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = modifier,
     )
-}
-
-@Preview(widthDp = 390, heightDp = 844)
-@Composable
-private fun DodajWydatekPreview() {
-    FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { DodajWydatekScreen() }
-    }
 }

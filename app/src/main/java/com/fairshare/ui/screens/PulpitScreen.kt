@@ -1,7 +1,6 @@
 package com.fairshare.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,16 +22,23 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.db.CategoryTotal
+import com.fairshare.data.db.PersonBalance
+import com.fairshare.data.model.ExpenseCategory
+import com.fairshare.data.model.Money
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.BalanceAmount
 import com.fairshare.ui.components.ColorDot
@@ -40,25 +46,33 @@ import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
-import com.fairshare.ui.sample.sampleCategories
-import com.fairshare.ui.theme.AvatarColors
+import com.fairshare.ui.components.avatarColorsFor
+import com.fairshare.ui.components.chartColor
+import com.fairshare.ui.components.initialOf
+import com.fairshare.ui.components.labelOrDefault
+import com.fairshare.ui.components.monthTitle
+import com.fairshare.ui.sample.CategoryShare
 import com.fairshare.ui.theme.FairShareTheme
 import com.fairshare.ui.theme.Negative
 import com.fairshare.ui.theme.Positive
-
-private data class PersonBalance(
-    val name: String,
-    val subtitle: String,
-    val caption: String,
-    val amount: String,
-    val positive: Boolean,
-    val avatar: AvatarColors,
-)
-
-private val people = emptyList<PersonBalance>()
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.DashboardUiState
+import com.fairshare.ui.viewmodel.DashboardViewModel
+import kotlin.math.abs
 
 @Composable
 fun PulpitScreen(
+    onOpenProfile: () -> Unit = {},
+    onSettle: () -> Unit = {},
+    viewModel: DashboardViewModel = viewModel(factory = AppViewModelProvider.Factory),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    PulpitContent(state, onOpenProfile, onSettle)
+}
+
+@Composable
+private fun PulpitContent(
+    state: DashboardUiState,
     onOpenProfile: () -> Unit = {},
     onSettle: () -> Unit = {},
 ) {
@@ -70,9 +84,9 @@ fun PulpitScreen(
     ) {
         ScreenHeader("Pulpit", onProfileClick = onOpenProfile)
         Spacer(Modifier.height(12.dp))
-        BalanceCard()
+        BalanceCard(state)
         Spacer(Modifier.height(12.dp))
-        MonthSummaryCard()
+        MonthSummaryCard(state)
         Spacer(Modifier.height(16.dp))
 
         Row(
@@ -87,15 +101,22 @@ fun PulpitScreen(
             TextButton(onClick = onSettle) { Text("Rozlicz się") }
         }
 
-        var filter by remember { mutableIntStateOf(0) }
+        var filter by rememberSaveable { mutableIntStateOf(0) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("Wszyscy", "Winni mi", "Ja winien").forEachIndexed { index, label ->
                 AppFilterChip(label, selected = filter == index, onClick = { filter = index })
             }
         }
 
-        if (people.isEmpty()) {
+        val people = when (filter) {
+            1 -> state.people.filter { it.balance > 0 }
+            2 -> state.people.filter { it.balance < 0 }
+            else -> state.people
+        }
+        if (state.people.isEmpty()) {
             EmptyHint("Brak rozliczeń. Dodaj pierwszy wydatek.")
+        } else if (people.isEmpty()) {
+            EmptyHint("Nikt tu nie pasuje.")
         } else {
             people.forEach { PersonRow(it) }
         }
@@ -103,7 +124,7 @@ fun PulpitScreen(
 }
 
 @Composable
-private fun BalanceCard() {
+private fun BalanceCard(state: DashboardUiState) {
     Surface(
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -114,16 +135,19 @@ private fun BalanceCard() {
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("Ogólnie tobie są winni", style = MaterialTheme.typography.titleSmall)
             Text(
-                "0,00 zł",
+                if (state.net >= 0) "Ogólnie tobie są winni" else "Ogólnie jesteś winien",
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                Money.format(abs(state.net)),
                 style = MaterialTheme.typography.displaySmall,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Medium,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MiniBalance("Winni tobie", "0,00 zł", Positive, Modifier.weight(1f))
-                MiniBalance("Ty winien", "0,00 zł", Negative, Modifier.weight(1f))
+                MiniBalance("Winni tobie", Money.format(state.owedToMe), Positive, Modifier.weight(1f))
+                MiniBalance("Ty winien", Money.format(state.iOwe), Negative, Modifier.weight(1f))
             }
         }
     }
@@ -142,7 +166,17 @@ private fun MiniBalance(label: String, amount: String, color: Color, modifier: M
 }
 
 @Composable
-private fun MonthSummaryCard() {
+private fun MonthSummaryCard(state: DashboardUiState) {
+    val total = state.monthShare
+    val categories = state.categories.filter { it.total > 0 }.map { item ->
+        val category = ExpenseCategory.fromKey(item.category)
+        CategoryShare(
+            name = category.labelOrDefault,
+            shortName = category.labelOrDefault,
+            percent = if (total > 0) ((item.total * 100 + total / 2) / total).toInt() else 0,
+            color = category.chartColor,
+        )
+    }
     SectionCard(modifier = Modifier.fillMaxWidth(), onClick = {}) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
@@ -150,14 +184,14 @@ private fun MonthSummaryCard() {
         ) {
             Column {
                 Text(
-                    "Październik · twój udział",
+                    "${monthTitle(state.month)} · twój udział",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Text("0 zł", style = MaterialTheme.typography.headlineSmall)
+                Text(Money.format(total), style = MaterialTheme.typography.headlineSmall)
             }
 
-            if (sampleCategories.isEmpty()) {
+            if (categories.isEmpty()) {
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -171,10 +205,10 @@ private fun MonthSummaryCard() {
                     .height(10.dp),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                sampleCategories.forEach { category ->
+                categories.forEach { category ->
                     Box(
                         Modifier
-                            .weight(category.percent.toFloat())
+                            .weight(category.percent.coerceAtLeast(1).toFloat())
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(3.dp))
                             .background(category.color),
@@ -183,7 +217,7 @@ private fun MonthSummaryCard() {
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                sampleCategories.take(2).forEachIndexed { index, category ->
+                categories.take(2).forEachIndexed { index, category ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -208,21 +242,30 @@ private fun PersonRow(person: PersonBalance) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(60.dp)
-            .clickable {},
+            .height(60.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        LetterAvatar(person.name.first().toString(), person.avatar)
+        LetterAvatar(initialOf(person.name), avatarColorsFor(person.userId))
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(person.name, style = MaterialTheme.typography.bodyLarge)
             Text(
-                person.subtitle,
+                person.groupNames.orEmpty(),
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        when {
+            person.balance > 0 -> BalanceAmount("winien ci", Money.format(person.balance), positive = true)
+            person.balance < 0 -> BalanceAmount("jesteś winien", Money.format(-person.balance), positive = false)
+            else -> Text(
+                "rozliczone",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        BalanceAmount(person.caption, person.amount, person.positive)
     }
 }
 
@@ -230,6 +273,16 @@ private fun PersonRow(person: PersonBalance) {
 @Composable
 private fun PulpitPreview() {
     FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { PulpitScreen() }
+        Surface(color = MaterialTheme.colorScheme.background) {
+            PulpitContent(
+                DashboardUiState(
+                    people = listOf(
+                        PersonBalance(2, "Ania", 18_600, "Mieszkanie"),
+                        PersonBalance(3, "Kasia", -4_250, "Wyjazd w góry"),
+                    ),
+                    categories = listOf(CategoryTotal("FOOD", 32_000), CategoryTotal("HOME", 21_000)),
+                ),
+            )
+        }
     }
 }

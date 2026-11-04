@@ -1,6 +1,5 @@
 package com.fairshare.ui.navigation
 
-import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BarChart
@@ -17,14 +16,19 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.navArgument
 import androidx.navigation.compose.rememberNavController
 import com.fairshare.ui.components.AddExpenseFab
 import com.fairshare.ui.screens.AktywnoscScreen
@@ -34,7 +38,13 @@ import com.fairshare.ui.screens.GrupyScreen
 import com.fairshare.ui.screens.ProfilScreen
 import com.fairshare.ui.screens.PulpitScreen
 import com.fairshare.ui.screens.RozliczScreen
+import com.fairshare.ui.screens.SkanujParagonScreen
 import com.fairshare.ui.screens.StatystykiScreen
+import com.fairshare.ui.screens.summaryLine
+import com.fairshare.ui.viewmodel.AddExpenseViewModel
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.GROUP_ID_ARG
+import com.fairshare.ui.viewmodel.ScanResultKeys
 
 enum class Destination(
     val route: String,
@@ -51,10 +61,13 @@ enum class Destination(
 
 /** Screens opened from the tabs; they sit on top of the tab's back stack. */
 private object Routes {
-    const val GROUP = "grupa/{name}"
-    const val ADD_EXPENSE = "dodaj_wydatek"
+    const val GROUP = "grupa/{$GROUP_ID_ARG}"
+    /** groupId is optional: -1 means "pick the group in the form". */
+    const val ADD_EXPENSE = "dodaj_wydatek?$GROUP_ID_ARG={$GROUP_ID_ARG}"
     const val SETTLE = "rozlicz"
     const val PROFILE = "profil"
+    /** Receipt scanner, opened from "Nowy wydatek"; the result goes back to that form. */
+    const val SCAN = "skanuj_paragon"
 }
 
 @Composable
@@ -68,7 +81,7 @@ fun FairShareApp() {
         Routes.SETTLE -> Destination.Pulpit
         else -> Destination.entries.firstOrNull { it.route == route }
     }
-    val fullScreen = route == Routes.ADD_EXPENSE || route == Routes.PROFILE
+    val fullScreen = route == Routes.ADD_EXPENSE || route == Routes.PROFILE || route == Routes.SCAN
     val showFab = route == Routes.GROUP || Destination.entries.any { it.route == route && it.showFab }
 
     val openTab: (Destination) -> Unit = { destination ->
@@ -88,7 +101,11 @@ fun FairShareApp() {
             if (!fullScreen) FairShareBottomBar(current, openTab)
         },
         floatingActionButton = {
-            if (showFab) AddExpenseFab(onClick = { navController.navigate(Routes.ADD_EXPENSE) })
+            if (showFab) {
+                // From a group screen the form opens with that group already selected
+                val groupId = if (route == Routes.GROUP) backStackEntry?.arguments?.getLong(GROUP_ID_ARG) else null
+                AddExpenseFab(onClick = { navController.navigate(addExpenseRoute(groupId)) })
+            }
         },
     ) { innerPadding ->
         NavHost(
@@ -100,26 +117,72 @@ fun FairShareApp() {
             composable(Destination.Grupy.route) {
                 GrupyScreen(
                     onOpenProfile = openProfile,
-                    onOpenGroup = { name -> navController.navigate("grupa/${Uri.encode(name)}") },
+                    onOpenGroup = { groupId -> navController.navigate("grupa/$groupId") },
                 )
             }
             composable(Destination.Statystyki.route) { StatystykiScreen(onOpenProfile = openProfile) }
             composable(Destination.Aktywnosc.route) { AktywnoscScreen(onOpenProfile = openProfile) }
 
-            composable(Routes.GROUP) { entry ->
+            composable(
+                Routes.GROUP,
+                arguments = listOf(navArgument(GROUP_ID_ARG) { type = NavType.LongType }),
+            ) {
                 GrupaScreen(
-                    name = entry.arguments?.getString("name").orEmpty(),
                     onBack = back,
                     onSettle = openSettle,
                     onOpenStats = { openTab(Destination.Statystyki) },
                 )
             }
-            composable(Routes.ADD_EXPENSE) { DodajWydatekScreen(onClose = back, onSave = back) }
+            composable(
+                Routes.ADD_EXPENSE,
+                arguments = listOf(
+                    navArgument(GROUP_ID_ARG) {
+                        type = NavType.LongType
+                        defaultValue = -1L
+                    },
+                ),
+            ) { entry ->
+                val form: AddExpenseViewModel = viewModel(factory = AppViewModelProvider.Factory)
+                // a receipt read by the scanner comes back through this entry's SavedStateHandle
+                val results = entry.savedStateHandle
+                val scannedTotal by results.getStateFlow<Long?>(ScanResultKeys.TOTAL, null).collectAsStateWithLifecycle()
+                LaunchedEffect(scannedTotal) {
+                    val total = scannedTotal ?: return@LaunchedEffect
+                    form.applyScan(total, results[ScanResultKeys.STORE], results[ScanResultKeys.SUMMARY])
+                    results.remove<String>(ScanResultKeys.STORE)
+                    results.remove<String>(ScanResultKeys.SUMMARY)
+                    results.remove<Long>(ScanResultKeys.TOTAL)
+                }
+                DodajWydatekScreen(
+                    onClose = back,
+                    onSave = back,
+                    onScanReceipt = { navController.navigate(Routes.SCAN) },
+                    viewModel = form,
+                )
+            }
+            composable(Routes.SCAN) {
+                SkanujParagonScreen(
+                    onBack = back,
+                    onUse = { receipt ->
+                        val total = receipt.totalGrosze
+                        val form = navController.previousBackStackEntry?.savedStateHandle
+                        if (total != null && form != null) {
+                            form[ScanResultKeys.STORE] = receipt.store
+                            form[ScanResultKeys.SUMMARY] = receipt.summaryLine()
+                            form[ScanResultKeys.TOTAL] = total
+                        }
+                        navController.popBackStack()
+                    },
+                )
+            }
             composable(Routes.SETTLE) { RozliczScreen(onBack = back) }
             composable(Routes.PROFILE) { ProfilScreen(onBack = back) }
         }
     }
 }
+
+private fun addExpenseRoute(groupId: Long?): String =
+    if (groupId != null && groupId > 0) "dodaj_wydatek?$GROUP_ID_ARG=$groupId" else "dodaj_wydatek"
 
 @Composable
 private fun FairShareBottomBar(
