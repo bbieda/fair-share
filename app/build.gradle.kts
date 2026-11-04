@@ -24,9 +24,14 @@ android {
         // phone, never for a published app (there the call must go through our backend).
         buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey()}\"")
         buildConfigField("String", "GEMINI_MODELS", "\"gemini-3.5-flash-lite,gemini-3.1-flash-lite\"")
+        // Keep every scanned photo with its reading on the phone (scanner/ScanArchive.kt): debug builds only
+        buildConfigField("boolean", "SAVE_SCANS", "false")
     }
 
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "SAVE_SCANS", "true")
+        }
         release {
             isMinifyEnabled = false
         }
