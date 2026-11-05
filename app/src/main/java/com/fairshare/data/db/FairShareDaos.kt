@@ -77,7 +77,6 @@ interface GroupDao {
     @Query("SELECT userId FROM group_members WHERE groupId = :groupId")
     suspend fun getMemberIds(groupId: Long): List<Long>
 
-    /** Every member's "paid minus owed" inside one group. */
     @Query(
         """
         SELECT u.id AS userId, u.name AS name, u.isMe AS isMe,
@@ -122,10 +121,6 @@ interface ExpenseDao {
     )
     fun observeGroupExpenses(groupId: Long, meId: Long): Flow<List<ExpenseListRow>>
 
-    /**
-     * Net balance between me and every other person who shares a group with me:
-     * what they owe me for expenses I paid minus what I owe them for expenses they paid.
-     */
     @Query(
         """
         SELECT u.id AS userId, u.name AS name,
@@ -149,7 +144,6 @@ interface ExpenseDao {
     )
     fun observePersonBalances(meId: Long): Flow<List<PersonBalance>>
 
-    /** My shares between two days (inclusive, epoch days), summed per category. */
     @Query(
         """
         SELECT e.category AS category, SUM(s.amount) AS total
@@ -161,4 +155,26 @@ interface ExpenseDao {
         """
     )
     fun observeMyCategoryTotals(meId: Long, fromDay: Long, toDay: Long): Flow<List<CategoryTotal>>
+
+    @Query(
+        """
+        SELECT SUM(s.amount)
+        FROM expense_shares s
+        INNER JOIN expenses e ON e.id = s.expenseId
+        WHERE s.userId = :meId AND e.date BETWEEN :fromDay AND :toDay
+        """
+    )
+    fun observeTotalSpentInRange(meId: Long, fromDay: Long, toDay: Long): Flow<Long?>
+}
+
+@Dao
+interface ActivityLogDao {
+    @Insert
+    suspend fun insert(log: ActivityLogEntity): Long
+
+    @Query("SELECT * FROM activity_logs ORDER BY timestamp DESC")
+    fun observeAll(): Flow<List<ActivityLogEntity>>
+
+    @Query("DELETE FROM activity_logs")
+    suspend fun deleteAll()
 }

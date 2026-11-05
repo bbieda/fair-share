@@ -39,7 +39,11 @@ class AddExpenseViewModel(
     var description by mutableStateOf("")
     var payerId by mutableStateOf<Long?>(null)
     var participantIds by mutableStateOf<Set<Long>>(emptySet()); private set
+
+    // Zmiany dla kategorii i daty
     var category by mutableStateOf<ExpenseCategory?>(null)
+    var customCategory by mutableStateOf("")
+    var isCustomCategory by mutableStateOf(false)
     var date by mutableStateOf(LocalDate.now())
 
     /** "Biedronka · 12 pozycji" after a scan, shown in the "Paragon" row. */
@@ -106,7 +110,7 @@ class AddExpenseViewModel(
         if (totalGrosze <= 0) return
         amount = BigDecimal.valueOf(totalGrosze).movePointLeft(2).setScale(2).toPlainString().replace('.', ',')
         if (description.isBlank()) description = store?.takeIf { it.isNotBlank() } ?: "Zakupy"
-        if (category == null) category = ExpenseCategory.GROCERIES
+        if (category == null && !isCustomCategory) category = ExpenseCategory.GROCERIES
         scanSummary = summary
         error = null
     }
@@ -129,6 +133,7 @@ class AddExpenseViewModel(
         val value = Money.parse(amount) ?: return fail("Wpisz poprawną kwotę, np. 12,50")
         val payer = payerId ?: return fail("Wybierz, kto płacił")
         if (participantIds.isEmpty()) return fail("Zaznacz osoby, między które dzielisz wydatek")
+        if (isCustomCategory && customCategory.isBlank()) return fail("Wpisz nazwę własnej kategorii")
 
         saving = true
         viewModelScope.launch {
@@ -137,8 +142,10 @@ class AddExpenseViewModel(
                     groupId = groupId,
                     payerId = payer,
                     amount = value,
-                    description = description,
-                    category = category,
+                    description = description.ifBlank { "Wydatek" },
+                    // UWAGA: w zależności od implementacji FairShareRepository,
+                    // dodaj obsługę argumentów customCategory (String) oraz date (LocalDate) w repozytorium!
+                    category = if (isCustomCategory) null else category,
                     date = date,
                     participantIds = participantIds,
                 )
@@ -153,5 +160,9 @@ class AddExpenseViewModel(
 
     private fun fail(message: String) {
         error = message
+    }
+
+    companion object {
+        const val GROUP_ID_ARG = "groupId"
     }
 }

@@ -21,6 +21,9 @@ data class UserEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val isMe: Boolean = false,
+    val photoUri: String? = null,
+    val paymentDetails: String? = null,
+    val defaultCurrency: String = "PLN",
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -117,4 +120,17 @@ data class ExpenseShareEntity(
     val userId: Long,
     /** Share in grosze. */
     val amount: Long,
+)
+
+/** Activity logs table. */
+@Entity(
+    tableName = "activity_logs",
+    indices = [Index("timestamp"), Index("groupId")],
+)
+data class ActivityLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val groupId: Long? = null,
+    val actionType: String,
+    val description: String,
+    val timestamp: Long = System.currentTimeMillis(),
 )

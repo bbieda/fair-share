@@ -23,6 +23,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -33,6 +35,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.db.PersonBalance
+import com.fairshare.data.model.Money
 import com.fairshare.ui.components.BackHeader
 import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.LetterAvatar
@@ -41,20 +47,22 @@ import com.fairshare.ui.theme.AvatarColors
 import com.fairshare.ui.theme.FairShareTheme
 import com.fairshare.ui.theme.Negative
 import com.fairshare.ui.theme.Positive
-
-private data class Settlement(
-    val name: String,
-    val avatar: AvatarColors,
-    val amount: String,
-    /** Group name or "2 grupy" */
-    val context: String,
-)
-
-private val toPay = emptyList<Settlement>()
-private val toReceive = emptyList<Settlement>()
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.RozliczViewModel
 
 @Composable
-fun RozliczScreen(onBack: () -> Unit = {}) {
+fun RozliczScreen(
+    onBack: () -> Unit = {},
+    viewModel: RozliczViewModel = viewModel(factory = AppViewModelProvider.Factory),
+) {
+    val balances by viewModel.personBalances.collectAsStateWithLifecycle()
+
+    val toPay = balances.filter { it.balance < 0 }
+    val toReceive = balances.filter { it.balance > 0 }
+
+    val totalToPay = toPay.sumOf { kotlin.math.abs(it.balance) }
+    val totalToReceive = toReceive.sumOf { it.balance }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -69,8 +77,8 @@ fun RozliczScreen(onBack: () -> Unit = {}) {
                 .padding(top = 8.dp),
         ) {
             Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SummaryAmount("Oddajesz", "0,00 zł", Negative, Modifier.weight(1f))
-                SummaryAmount("Dostaniesz", "0,00 zł", Positive, Modifier.weight(1f))
+                SummaryAmount("Oddajesz", Money.format(totalToPay), Negative, Modifier.weight(1f))
+                SummaryAmount("Dostaniesz", Money.format(totalToReceive), Positive, Modifier.weight(1f))
             }
         }
 
@@ -78,9 +86,19 @@ fun RozliczScreen(onBack: () -> Unit = {}) {
         if (toPay.isEmpty()) {
             EmptyHint("Nie masz nic do oddania.")
         } else {
-            toPay.forEach { settlement ->
-                SettlementRow(settlement, Negative) {
-                    FilledTonalButton(onClick = {}, modifier = Modifier.height(40.dp)) { Text("Zapisz spłatę") }
+            toPay.forEach { person ->
+                SettlementRow(
+                    name = person.name,
+                    amount = Money.format(kotlin.math.abs(person.balance)),
+                    context = person.groupNames ?: "Grupa",
+                    amountColor = Negative,
+                ) {
+                    FilledTonalButton(
+                        onClick = { viewModel.settleUp(person) },
+                        modifier = Modifier.height(40.dp)
+                    ) {
+                        Text("Zapisz spłatę")
+                    }
                 }
             }
         }
@@ -89,14 +107,21 @@ fun RozliczScreen(onBack: () -> Unit = {}) {
         if (toReceive.isEmpty()) {
             EmptyHint("Nikt nie jest ci winien.")
         } else {
-            toReceive.forEach { settlement ->
-                SettlementRow(settlement, Positive) {
+            toReceive.forEach { person ->
+                SettlementRow(
+                    name = person.name,
+                    amount = Money.format(person.balance),
+                    context = person.groupNames ?: "Grupa",
+                    amountColor = Positive,
+                ) {
                     OutlinedButton(
-                        onClick = {},
+                        onClick = { viewModel.settleUp(person) },
                         modifier = Modifier.height(40.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
-                    ) { Text("Przypomnij") }
+                    ) {
+                        Text("Rozlicz")
+                    }
                 }
             }
         }
@@ -147,10 +172,18 @@ private fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun SettlementRow(
-    settlement: Settlement,
+    name: String,
+    amount: String,
+    context: String,
     amountColor: Color,
     action: @Composable () -> Unit,
 ) {
+    // Dynamicznie wybiera jeden z dostępnych kolorów z AvatarColors na podstawie imienia
+    val avatarColor = remember(name) {
+        val colors = AvatarColors.values()
+        colors[(name.hashCode() and 0x7FFFFFFF) % colors.size]
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -158,14 +191,17 @@ private fun SettlementRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        LetterAvatar(settlement.name.first().toString(), settlement.avatar)
+        LetterAvatar(
+            text = name.firstOrNull()?.toString() ?: "U",
+            colors = avatarColor
+        )
         Column(Modifier.weight(1f)) {
-            Text(settlement.name, style = MaterialTheme.typography.bodyLarge)
+            Text(name, style = MaterialTheme.typography.bodyLarge)
             Text(
                 buildAnnotatedString {
-                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = amountColor)) { append(settlement.amount) }
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold, color = amountColor)) { append(amount) }
                     append(" · ")
-                    append(settlement.context)
+                    append(context)
                 },
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -173,13 +209,5 @@ private fun SettlementRow(
             )
         }
         action()
-    }
-}
-
-@Preview(widthDp = 390, heightDp = 844)
-@Composable
-private fun RozliczPreview() {
-    FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { RozliczScreen() }
     }
 }

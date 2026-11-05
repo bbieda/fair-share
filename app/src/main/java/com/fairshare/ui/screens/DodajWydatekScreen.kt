@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -160,7 +162,7 @@ fun DodajWydatekScreen(
             TextField(
                 value = vm.description,
                 onValueChange = { vm.description = it },
-                label = { Text("Opis") },
+                label = { Text("Opis (np. Zakupy w Biedronce)") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier
@@ -220,24 +222,51 @@ fun DodajWydatekScreen(
 
             // ---- Category ----
             Box {
+                val categoryLabel = if (vm.isCustomCategory) {
+                    if (vm.customCategory.isNotBlank()) vm.customCategory else "Własna kategoria"
+                } else {
+                    vm.category?.labelOrDefault ?: "Wybierz kategorię"
+                }
+                val categoryIcon = if (vm.isCustomCategory) Icons.AutoMirrored.Outlined.Label else (vm.category?.icon ?: Icons.AutoMirrored.Outlined.Label)
+
                 ListRow(
-                    vm.category?.icon ?: Icons.AutoMirrored.Outlined.Label,
-                    vm.category?.label ?: "Wybierz kategorię",
+                    categoryIcon,
+                    categoryLabel,
                     overline = "Kategoria",
                     onClick = { categoryMenuOpen = true },
                 )
                 DropdownMenu(expanded = categoryMenuOpen, onDismissRequest = { categoryMenuOpen = false }) {
-                    (ExpenseCategory.entries + listOf<ExpenseCategory?>(null)).forEach { category ->
+                    ExpenseCategory.entries.forEach { category ->
                         DropdownMenuItem(
                             text = { Text(category.labelOrDefault) },
                             leadingIcon = { Icon(category.icon, contentDescription = null) },
                             onClick = {
                                 vm.category = category
+                                vm.isCustomCategory = false
                                 categoryMenuOpen = false
                             },
                         )
                     }
+                    DropdownMenuItem(
+                        text = { Text("Inna (wpisz własną)") },
+                        leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        onClick = {
+                            vm.category = null
+                            vm.isCustomCategory = true
+                            categoryMenuOpen = false
+                        }
+                    )
                 }
+            }
+
+            if (vm.isCustomCategory) {
+                OutlinedTextField(
+                    value = vm.customCategory,
+                    onValueChange = { vm.customCategory = it },
+                    label = { Text("Wpisz własną kategorię") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(start = 40.dp, top = 4.dp, bottom = 8.dp)
+                )
             }
 
             // ---- Date ----
@@ -247,6 +276,8 @@ fun DodajWydatekScreen(
                 overline = "Data",
                 onClick = { datePickerOpen = true },
             )
+
+            // ---- Receipt ----
             ListRow(
                 Icons.Outlined.PhotoCamera,
                 vm.scanSummary ?: "Zeskanuj paragon",
@@ -297,7 +328,6 @@ private fun ExpenseDatePicker(
     onDismiss: () -> Unit,
     onPicked: (LocalDate) -> Unit,
 ) {
-    // DatePicker works in UTC milliseconds
     val state = rememberDatePickerState(
         initialSelectedDateMillis = initial.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
     )

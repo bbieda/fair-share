@@ -22,28 +22,38 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.db.CategoryTotal
+import com.fairshare.data.model.ExpenseCategory
+import com.fairshare.data.model.Money
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.ColorDot
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
-import com.fairshare.ui.sample.CategoryShare
-import com.fairshare.ui.sample.sampleCategories
+import com.fairshare.ui.components.labelOrDefault
 import com.fairshare.ui.theme.FairShareTheme
-
-// Bar heights in dp; 0 = no spending that month
-private val lastMonths = listOf("maj" to 0, "cze" to 0, "lip" to 0, "sie" to 0, "wrz" to 0, "paź" to 0)
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.StatystykiViewModel
 
 @Composable
-fun StatystykiScreen(onOpenProfile: () -> Unit = {}) {
+fun StatystykiScreen(
+    onOpenProfile: () -> Unit = {},
+    viewModel: StatystykiViewModel = viewModel(factory = AppViewModelProvider.Factory),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -56,24 +66,27 @@ fun StatystykiScreen(onOpenProfile: () -> Unit = {}) {
             modifier = Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            AppFilterChip("Październik 2026", selected = false, onClick = {}, dropdown = true)
+            AppFilterChip("${state.month.month.name} ${state.month.year}", selected = false, onClick = {}, dropdown = true)
             AppFilterChip("Mój udział", selected = true, onClick = {})
             AppFilterChip("Wszystkie grupy", selected = false, onClick = {}, dropdown = true)
         }
 
         Spacer(Modifier.height(8.dp))
-        MonthTotalCard()
+        MonthTotalCard(totalGrosze = state.monthTotal)
         Spacer(Modifier.height(12.dp))
-        StructureCard()
+        StructureCard(categories = state.categories, totalGrosze = state.monthTotal)
         Spacer(Modifier.height(12.dp))
-        LastMonthsCard()
+        LastMonthsCard(history = state.monthlyHistory)
         Spacer(Modifier.height(12.dp))
-        BudgetCard()
+        BudgetCard(monthTotalGrosze = state.monthTotal)
     }
 }
 
 @Composable
-private fun MonthTotalCard() {
+private fun MonthTotalCard(totalGrosze: Long) {
+    val daysInMonth = 30
+    val avgPerDayGrosze = totalGrosze / daysInMonth
+
     SectionCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Text(
@@ -82,14 +95,14 @@ private fun MonthTotalCard() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "0 zł",
+                Money.format(totalGrosze),
                 style = MaterialTheme.typography.displaySmall,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(top = 2.dp),
             )
             Text(
-                "średnio 0,00 zł dziennie",
+                "średnio ${Money.format(avgPerDayGrosze)} dziennie",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
@@ -99,7 +112,7 @@ private fun MonthTotalCard() {
 }
 
 @Composable
-private fun StructureCard() {
+private fun StructureCard(categories: List<CategoryTotal>, totalGrosze: Long) {
     SectionCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -115,9 +128,9 @@ private fun StructureCard() {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(Modifier.size(128.dp), contentAlignment = Alignment.Center) {
-                    DonutChart(sampleCategories, Modifier.size(128.dp))
+                    DonutChart(categories = categories, totalGrosze = totalGrosze, modifier = Modifier.size(128.dp))
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("0 zł", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                        Text(Money.format(totalGrosze), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
                         Text(
                             "razem",
                             fontSize = 11.sp,
@@ -130,21 +143,23 @@ private fun StructureCard() {
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    if (sampleCategories.isEmpty()) {
+                    if (categories.isEmpty()) {
                         Text(
                             "Brak wydatków w tym miesiącu",
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    sampleCategories.forEach { category ->
+                    categories.forEach { cat ->
+                        val percent = if (totalGrosze > 0) (cat.total * 100 / totalGrosze).toInt() else 0
+                        val categoryEnum = ExpenseCategory.entries.firstOrNull { it.name == cat.category }
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            ColorDot(category.color)
-                            Text(category.shortName, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                            Text("${category.percent}%", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            ColorDot(MaterialTheme.colorScheme.primary)
+                            Text(categoryEnum.labelOrDefault, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                            Text("$percent%", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
@@ -154,36 +169,39 @@ private fun StructureCard() {
 }
 
 @Composable
-private fun DonutChart(categories: List<CategoryShare>, modifier: Modifier = Modifier) {
+private fun DonutChart(categories: List<CategoryTotal>, totalGrosze: Long, modifier: Modifier = Modifier) {
     val emptyColor = MaterialTheme.colorScheme.surfaceContainerHighest
+    val primaryColor = MaterialTheme.colorScheme.primary
+
     Canvas(modifier) {
         val strokeWidth = 18.dp.toPx()
         val radius = size.minDimension * 50f / 128f
         val topLeft = Offset(center.x - radius, center.y - radius)
         val arcSize = Size(radius * 2, radius * 2)
-        if (categories.isEmpty()) {
+
+        if (categories.isEmpty() || totalGrosze <= 0) {
             drawArc(emptyColor, 0f, 360f, false, topLeft, arcSize, style = Stroke(width = strokeWidth))
-        }
-        val gapDegrees = 2.3f
-        var start = -90f
-        categories.forEach { category ->
-            val sweep = category.percent / 100f * 360f
-            drawArc(
-                color = category.color,
-                startAngle = start,
-                sweepAngle = sweep - gapDegrees,
-                useCenter = false,
-                topLeft = topLeft,
-                size = arcSize,
-                style = Stroke(width = strokeWidth),
-            )
-            start += sweep
+        } else {
+            var start = -90f
+            categories.forEach { cat ->
+                val sweep = (cat.total.toFloat() / totalGrosze.toFloat()) * 360f
+                drawArc(
+                    color = primaryColor,
+                    startAngle = start,
+                    sweepAngle = sweep - 2f,
+                    useCenter = false,
+                    topLeft = topLeft,
+                    size = arcSize,
+                    style = Stroke(width = strokeWidth),
+                )
+                start += sweep
+            }
         }
     }
 }
 
 @Composable
-private fun LastMonthsCard() {
+private fun LastMonthsCard(history: List<Pair<String, Long>>) {
     SectionCard(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("Ostatnie 6 miesięcy", style = MaterialTheme.typography.titleMedium)
@@ -194,8 +212,9 @@ private fun LastMonthsCard() {
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                lastMonths.forEachIndexed { index, (label, height) ->
-                    val current = index == lastMonths.lastIndex
+                history.forEachIndexed { index, (label, amount) ->
+                    val isCurrent = index == history.lastIndex
+                    val heightDp = if (amount > 0) 60 else 8
                     Column(
                         modifier = Modifier.weight(1f),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -204,9 +223,9 @@ private fun LastMonthsCard() {
                         Box(
                             Modifier
                                 .fillMaxWidth()
-                                .height(maxOf(height, 4).dp)
+                                .height(heightDp.dp)
                                 .background(
-                                    if (current) MaterialTheme.colorScheme.primary
+                                    if (isCurrent) MaterialTheme.colorScheme.primary
                                     else MaterialTheme.colorScheme.surfaceContainerHighest,
                                     RoundedCornerShape(6.dp),
                                 ),
@@ -214,8 +233,8 @@ private fun LastMonthsCard() {
                         Text(
                             label,
                             fontSize = 11.sp,
-                            fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                            color = if (current) MaterialTheme.colorScheme.onBackground
+                            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isCurrent) MaterialTheme.colorScheme.onBackground
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
@@ -226,7 +245,7 @@ private fun LastMonthsCard() {
 }
 
 @Composable
-private fun BudgetCard() {
+private fun BudgetCard(monthTotalGrosze: Long) {
     SectionCard(modifier = Modifier.fillMaxWidth(), onClick = {}) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -236,7 +255,7 @@ private fun BudgetCard() {
                     fontWeight = FontWeight.Medium,
                     modifier = Modifier.weight(1f),
                 )
-                Text("0 / 0 zł", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text("${Money.format(monthTotalGrosze)} / 0 zł", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
             }
             Box(
                 Modifier
@@ -246,19 +265,11 @@ private fun BudgetCard() {
                     .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(4.dp)),
             )
             Text(
-                "Nie ustawiono budżetu",
+                "Nie ustawiono limitu budżetu",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
-    }
-}
-
-@Preview(widthDp = 390, heightDp = 844)
-@Composable
-private fun StatystykiPreview() {
-    FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { StatystykiScreen() }
     }
 }

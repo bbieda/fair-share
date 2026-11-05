@@ -1,6 +1,5 @@
 package com.fairshare.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -28,7 +27,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -36,30 +34,28 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.db.ActivityLogEntity
 import com.fairshare.ui.components.AppFilterChip
-import com.fairshare.ui.components.ColorDot
 import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.theme.AvatarColors
 import com.fairshare.ui.theme.FairShareTheme
-import com.fairshare.ui.theme.UnreadBackground
-
-private data class ActivityItem(
-    val avatar: String,
-    val avatarColors: AvatarColors,
-    val actor: String,
-    val action: String,
-    val detail: String,
-    val time: String,
-    val unread: Boolean = false,
-)
-
-private val activitySections = emptyList<Pair<String, List<ActivityItem>>>()
+import com.fairshare.ui.viewmodel.AktywnoscViewModel
+import com.fairshare.ui.viewmodel.AppViewModelProvider
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
-fun AktywnoscScreen(onOpenProfile: () -> Unit = {}) {
-    // Rows run edge to edge, so horizontal padding is applied per element
+fun AktywnoscScreen(
+    onOpenProfile: () -> Unit = {},
+    viewModel: AktywnoscViewModel = viewModel(factory = AppViewModelProvider.Factory),
+) {
+    val logs by viewModel.logs.collectAsStateWithLifecycle()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -91,12 +87,12 @@ fun AktywnoscScreen(onOpenProfile: () -> Unit = {}) {
         }
 
         Spacer(Modifier.height(8.dp))
-        if (activitySections.isEmpty()) {
+
+        if (logs.isEmpty()) {
             EmptyHint("Brak aktywności.", modifier = Modifier.padding(horizontal = 16.dp))
-        }
-        activitySections.forEach { (title, items) ->
+        } else {
             Text(
-                title,
+                "Ostatnie zdarzenia",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
@@ -104,59 +100,54 @@ fun AktywnoscScreen(onOpenProfile: () -> Unit = {}) {
                     .height(36.dp)
                     .padding(top = 8.dp),
             )
-            items.forEach { ActivityRow(it) }
+            logs.forEach { log -> ActivityRow(log) }
         }
     }
 }
 
 @Composable
-private fun ActivityRow(item: ActivityItem) {
+private fun ActivityRow(log: ActivityLogEntity) {
+    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val timeString = remember(log.timestamp) { timeFormatter.format(Date(log.timestamp)) }
+
+    // Dynamicznie wybiera jeden z dostępnych kolorów z AvatarColors na podstawie nazwy akcji
+    val avatarColor = remember(log.actionType) {
+        val colors = AvatarColors.values()
+        colors[(log.actionType.hashCode() and 0x7FFFFFFF) % colors.size]
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (item.unread) UnreadBackground else Color.Transparent)
             .clickable {}
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        LetterAvatar(item.avatar, item.avatarColors)
+        LetterAvatar(
+            text = log.actionType.firstOrNull()?.toString() ?: "A",
+            colors = avatarColor
+        )
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 buildAnnotatedString {
-                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(item.actor) }
-                    append(" ")
-                    append(item.action)
+                    withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) { append(log.actionType) }
                 },
                 fontSize = 15.sp,
                 lineHeight = 20.sp,
             )
             Text(
-                item.detail,
+                log.description,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Spacer(Modifier.width(16.dp))
-        Column(
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                item.time,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (item.unread) ColorDot(MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@Preview(widthDp = 390, heightDp = 844)
-@Composable
-private fun AktywnoscPreview() {
-    FairShareTheme {
-        Surface(color = MaterialTheme.colorScheme.background) { AktywnoscScreen() }
+        Text(
+            timeString,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

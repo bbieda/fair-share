@@ -9,10 +9,8 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.fairshare.FairShareApplication
 import com.fairshare.data.FairShareRepository
 
-/** Navigation argument with a group id, read by the ViewModels through SavedStateHandle. */
 const val GROUP_ID_ARG = "groupId"
 
-/** Creates every screen's ViewModel with the app-wide repository (simple manual DI). */
 object AppViewModelProvider {
     val Factory: ViewModelProvider.Factory = viewModelFactory {
         initializer { DashboardViewModel(repository()) }
@@ -21,6 +19,9 @@ object AppViewModelProvider {
         initializer { AddExpenseViewModel(createSavedStateHandle(), repository()) }
         initializer { ProfileViewModel(repository()) }
         initializer { ScanViewModel(application(), createSavedStateHandle()) }
+        initializer { RozliczViewModel(repository()) }
+        initializer { StatystykiViewModel(repository()) }
+        initializer { AktywnoscViewModel(repository()) }
     }
 }
 

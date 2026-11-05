@@ -13,3 +13,5 @@
 /run-phone.log
 /phone-log.txt
 /skany/
+app/schemas/com.fairshare.data.db.FairShareDatabase/1.json
+app/schemas/com.fairshare.data.db.FairShareDatabase/2.json
