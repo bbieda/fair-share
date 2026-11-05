@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExpenseShareEntity::class,
         ActivityLogEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class FairShareDatabase : RoomDatabase() {

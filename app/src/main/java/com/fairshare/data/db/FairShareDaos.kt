@@ -26,6 +26,9 @@ interface UserDao {
 
     @Query("SELECT * FROM users WHERE isMe = 0 AND name = :name COLLATE NOCASE LIMIT 1")
     suspend fun findOtherByName(name: String): UserEntity?
+
+    @Query("SELECT * FROM users WHERE id = :id")
+    suspend fun getById(id: Long): UserEntity?
 }
 
 @Dao
@@ -102,6 +105,9 @@ interface ExpenseDao {
     @Insert
     suspend fun insertShares(shares: List<ExpenseShareEntity>)
 
+    @Query("SELECT * FROM expenses WHERE id = :expenseId")
+    suspend fun getExpense(expenseId: Long): ExpenseEntity?
+
     @Query("DELETE FROM expenses WHERE id = :expenseId")
     suspend fun deleteExpense(expenseId: Long)
 
@@ -112,7 +118,8 @@ interface ExpenseDao {
             u.name AS payerName, u.isMe AS payerIsMe,
             COALESCE((SELECT s.amount FROM expense_shares s
                 WHERE s.expenseId = e.id AND s.userId = :meId), 0) AS myShare,
-            (SELECT COUNT(*) FROM expense_shares s WHERE s.expenseId = e.id) AS participantCount
+            (SELECT COUNT(*) FROM expense_shares s WHERE s.expenseId = e.id) AS participantCount,
+            e.isSettlement AS isSettlement
         FROM expenses e
         INNER JOIN users u ON u.id = e.payerId
         WHERE e.groupId = :groupId
@@ -149,22 +156,88 @@ interface ExpenseDao {
         SELECT e.category AS category, SUM(s.amount) AS total
         FROM expense_shares s
         INNER JOIN expenses e ON e.id = s.expenseId
-        WHERE s.userId = :meId AND e.date BETWEEN :fromDay AND :toDay
+        WHERE s.userId = :meId AND e.isSettlement = 0
+          AND e.date BETWEEN :fromDay AND :toDay
+          AND (:groupId < 0 OR e.groupId = :groupId)
         GROUP BY e.category
         ORDER BY total DESC
         """
     )
-    fun observeMyCategoryTotals(meId: Long, fromDay: Long, toDay: Long): Flow<List<CategoryTotal>>
+    fun observeMyCategoryTotals(meId: Long, fromDay: Long, toDay: Long, groupId: Long): Flow<List<CategoryTotal>>
 
     @Query(
         """
-        SELECT SUM(s.amount)
-        FROM expense_shares s
-        INNER JOIN expenses e ON e.id = s.expenseId
-        WHERE s.userId = :meId AND e.date BETWEEN :fromDay AND :toDay
+        SELECT e.category AS category, SUM(e.amount) AS total
+        FROM expenses e
+        WHERE e.isSettlement = 0
+          AND e.date BETWEEN :fromDay AND :toDay
+          AND (:groupId < 0 OR e.groupId = :groupId)
+        GROUP BY e.category
+        ORDER BY total DESC
         """
     )
-    fun observeTotalSpentInRange(meId: Long, fromDay: Long, toDay: Long): Flow<Long?>
+    fun observeAllCategoryTotals(fromDay: Long, toDay: Long, groupId: Long): Flow<List<CategoryTotal>>
+
+    @Query(
+        """
+        SELECT e.date AS date, SUM(s.amount) AS total
+        FROM expense_shares s
+        INNER JOIN expenses e ON e.id = s.expenseId
+        WHERE s.userId = :meId AND e.isSettlement = 0
+          AND e.date BETWEEN :fromDay AND :toDay
+          AND (:groupId < 0 OR e.groupId = :groupId)
+        GROUP BY e.date
+        """
+    )
+    fun observeMyShareByDay(meId: Long, fromDay: Long, toDay: Long, groupId: Long): Flow<List<DayTotal>>
+
+    @Query(
+        """
+        SELECT e.date AS date, SUM(e.amount) AS total
+        FROM expenses e
+        WHERE e.isSettlement = 0
+          AND e.date BETWEEN :fromDay AND :toDay
+          AND (:groupId < 0 OR e.groupId = :groupId)
+        GROUP BY e.date
+        """
+    )
+    fun observeAllSpendingByDay(fromDay: Long, toDay: Long, groupId: Long): Flow<List<DayTotal>>
+
+    @Query(
+        """
+        SELECT u.id AS userId, u.name AS name, g.id AS groupId, g.name AS groupName,
+            COALESCE((SELECT SUM(s.amount) FROM expense_shares s
+                INNER JOIN expenses e ON e.id = s.expenseId
+                WHERE e.groupId = g.id AND e.payerId = :meId AND s.userId = u.id), 0)
+            - COALESCE((SELECT SUM(s.amount) FROM expense_shares s
+                INNER JOIN expenses e ON e.id = s.expenseId
+                WHERE e.groupId = g.id AND e.payerId = u.id AND s.userId = :meId), 0) AS balance
+        FROM users u
+        INNER JOIN group_members mu ON mu.userId = u.id
+        INNER JOIN friend_groups g ON g.id = mu.groupId
+        INNER JOIN group_members mm ON mm.groupId = g.id AND mm.userId = :meId
+        WHERE u.isMe = 0
+        ORDER BY u.name COLLATE NOCASE, g.name COLLATE NOCASE
+        """
+    )
+    fun observeSettlementLines(meId: Long): Flow<List<SettlementLine>>
+
+    @Query(
+        """
+        SELECT e.date AS date, g.name AS groupName, e.description AS description,
+            e.category AS category, u.name AS payerName, e.amount AS amount,
+            e.isSettlement AS isSettlement,
+            (SELECT GROUP_CONCAT(su.name || ':' || s.amount, '|')
+                FROM expense_shares s
+                INNER JOIN users su ON su.id = s.userId
+                WHERE s.expenseId = e.id) AS shares
+        FROM expenses e
+        INNER JOIN friend_groups g ON g.id = e.groupId
+        INNER JOIN users u ON u.id = e.payerId
+        ORDER BY e.date, e.id
+        """
+    )
+    suspend fun exportRows(): List<ExpenseExportRow>
 }
 
 @Dao
@@ -174,6 +247,15 @@ interface ActivityLogDao {
 
     @Query("SELECT * FROM activity_logs ORDER BY timestamp DESC")
     fun observeAll(): Flow<List<ActivityLogEntity>>
+
+    @Query("SELECT COUNT(*) FROM activity_logs WHERE seen = 0")
+    fun observeUnreadCount(): Flow<Int>
+
+    @Query("UPDATE activity_logs SET seen = 1")
+    suspend fun markAllSeen()
+
+    @Query("UPDATE activity_logs SET seen = 1 WHERE id = :id")
+    suspend fun markSeen(id: Long)
 
     @Query("DELETE FROM activity_logs")
     suspend fun deleteAll()

@@ -7,6 +7,10 @@ import java.math.RoundingMode
 object Money {
     private const val NBSP = ' '
 
+    /** Updated from the signed-in profile so every screen formats with the chosen currency. */
+    @Volatile
+    var currencyCode: String = "PLN"
+
     /**
      * Parses user input like "12", "12,5", "12.50", "1 234,99" into grosze.
      * Returns null for empty, malformed, zero or negative input.
@@ -23,14 +27,26 @@ object Money {
     }
 
     /** 123456 -> "1 234,56 zł" (non-breaking spaces). Sign is kept for negatives. */
-    fun format(grosze: Long, withCurrency: Boolean = true): String {
+    fun format(grosze: Long, withCurrency: Boolean = true, currency: String = currencyCode): String {
         val abs = BigDecimal.valueOf(grosze).abs().movePointLeft(2).setScale(2)
         val (whole, fraction) = abs.toPlainString().split('.')
         val grouped = whole.reversed().chunked(3).joinToString(NBSP.toString()).reversed()
         val sign = if (grosze < 0) "-" else ""
         val text = "$sign$grouped,$fraction"
-        return if (withCurrency) "$text${NBSP}zł" else text
+        return if (withCurrency) "$text$NBSP${symbol(currency)}" else text
     }
+
+    fun symbol(currency: String): String = when (currency.uppercase()) {
+        "EUR" -> "€"
+        "USD" -> "$"
+        "GBP" -> "£"
+        "CZK" -> "Kč"
+        else -> "zł"
+    }
+
+    /** Plain "12,50" for amount fields. */
+    fun formatInput(grosze: Long): String =
+        BigDecimal.valueOf(grosze).abs().movePointLeft(2).setScale(2).toPlainString().replace('.', ',')
 
     /**
      * Splits [total] into [parts] shares that differ by at most 1 gr and always sum to [total].

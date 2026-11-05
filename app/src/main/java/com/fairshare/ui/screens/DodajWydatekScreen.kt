@@ -67,6 +67,7 @@ import com.fairshare.ui.components.labelOrDefault
 import com.fairshare.ui.components.plural
 import com.fairshare.ui.viewmodel.AddExpenseViewModel
 import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.SplitMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -155,7 +156,12 @@ fun DodajWydatekScreen(
                         field()
                     },
                 )
-                Text("PLN", fontSize = 20.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    Money.currencyCode,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.primary)
 
@@ -194,12 +200,13 @@ fun DodajWydatekScreen(
             }
 
             // ---- Split ----
-            val share = vm.sharePreview
+            val equal = vm.equalShares
             ListRow(
                 Icons.Outlined.Percent,
                 when {
                     vm.participantIds.isEmpty() -> "Zaznacz osoby poniżej"
-                    share != null -> "Równo, po ${Money.format(share)}"
+                    vm.splitMode == SplitMode.CUSTOM -> "Własne kwoty"
+                    equal != null -> "Równo, największy udział ${Money.format(equal.values.max())}"
                     else -> "Równo, " + plural(vm.participantIds.size, "osoba", "osoby", "osób")
                 },
                 overline = "Podział",
@@ -210,11 +217,45 @@ fun DodajWydatekScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
                 ) {
+                    AppFilterChip("Równo", selected = vm.splitMode == SplitMode.EQUAL, onClick = { vm.setSplitMode(SplitMode.EQUAL) })
+                    AppFilterChip("Kwoty", selected = vm.splitMode == SplitMode.CUSTOM, onClick = { vm.setSplitMode(SplitMode.CUSTOM) })
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
+                ) {
                     vm.members.forEach { member ->
+                        val label = if (member.isMe) "Ty" else member.name
+                        val shareText = equal?.get(member.id)?.let { " · ${Money.format(it, withCurrency = false)}" }.orEmpty()
                         AppFilterChip(
-                            if (member.isMe) "Ty" else member.name,
+                            if (vm.splitMode == SplitMode.EQUAL && member.id in vm.participantIds) label + shareText else label,
                             selected = member.id in vm.participantIds,
                             onClick = { vm.toggleParticipant(member.id) },
+                        )
+                    }
+                }
+                if (vm.splitMode == SplitMode.CUSTOM) {
+                    vm.members.filter { it.id in vm.participantIds }.forEach { member ->
+                        OutlinedTextField(
+                            value = vm.customShares[member.id].orEmpty(),
+                            onValueChange = { vm.updateCustomShare(member.id, it) },
+                            label = { Text(if (member.isMe) "Ty" else member.name) },
+                            suffix = { Text(Money.currencyCode) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, bottom = 8.dp),
+                        )
+                    }
+                    val sum = vm.customShareSum
+                    val total = Money.parse(vm.amount)
+                    if (sum != null && total != null && sum != total) {
+                        Text(
+                            "Suma udziałów ${Money.format(sum)} · wydatek ${Money.format(total)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
                         )
                     }
                 }
@@ -243,6 +284,18 @@ fun DodajWydatekScreen(
                             onClick = {
                                 vm.category = category
                                 vm.isCustomCategory = false
+                                categoryMenuOpen = false
+                            },
+                        )
+                    }
+                    vm.savedCustomCategories.forEach { name ->
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null) },
+                            onClick = {
+                                vm.category = null
+                                vm.isCustomCategory = true
+                                vm.customCategory = name
                                 categoryMenuOpen = false
                             },
                         )

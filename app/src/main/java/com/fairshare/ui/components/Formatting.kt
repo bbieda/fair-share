@@ -76,3 +76,14 @@ val ExpenseCategory?.chartColor: Color
     }
 
 val ExpenseCategory?.labelOrDefault: String get() = this?.label ?: "Bez kategorii"
+
+fun categoryLabel(key: String?): String = ExpenseCategory.labelOf(key)
+
+fun categoryIcon(key: String?): ImageVector = ExpenseCategory.fromKey(key).icon
+
+fun categoryChartColor(key: String?): Color {
+    val known = ExpenseCategory.fromKey(key)
+    if (key.isNullOrBlank() || known != null) return known.chartColor
+    val palette = listOf(ChartTeal, ChartBlue, ChartPink, ChartOrange, ChartPurple, ChartGray)
+    return palette[(key.hashCode() and 0x7FFFFFFF) % palette.size]
+}

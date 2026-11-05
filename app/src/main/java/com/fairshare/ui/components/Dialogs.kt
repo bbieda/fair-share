@@ -26,14 +26,21 @@ fun TextInputDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
     initialValue: String = "",
+    validate: ((String) -> String?)? = null,
     extraContent: @Composable () -> Unit = {},
 ) {
     var text by rememberSaveable { mutableStateOf(initialValue) }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
     val canConfirm = text.isNotBlank()
     val confirm = {
         if (canConfirm) {
-            onConfirm(text.trim())
-            onDismiss()
+            val message = validate?.invoke(text.trim())
+            if (message != null) {
+                error = message
+            } else {
+                onConfirm(text.trim())
+                onDismiss()
+            }
         }
     }
     AlertDialog(
@@ -52,6 +59,8 @@ fun TextInputDialog(
                     ),
                     keyboardActions = KeyboardActions(onDone = { confirm() }),
                     modifier = Modifier.fillMaxWidth(),
+                    isError = error != null,
+                    supportingText = error?.let { message -> { Text(message) } },
                 )
                 extraContent()
             }

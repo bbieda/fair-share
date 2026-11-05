@@ -92,6 +92,8 @@ data class ExpenseEntity(
     val category: String?,
     /** Day of the expense as LocalDate.toEpochDay(). */
     val date: Long,
+    /** True for a recorded repayment. Settlements change balances and stay out of spending stats. */
+    val isSettlement: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -132,5 +134,6 @@ data class ActivityLogEntity(
     val groupId: Long? = null,
     val actionType: String,
     val description: String,
+    val seen: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
 )

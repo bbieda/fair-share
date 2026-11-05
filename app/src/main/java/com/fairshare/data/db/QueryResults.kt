@@ -39,6 +39,34 @@ data class ExpenseListRow(
     /** What the phone owner owes of this expense (0 when not a participant). */
     val myShare: Long,
     val participantCount: Int,
+    val isSettlement: Boolean = false,
+)
+
+/** Net between the phone owner and one person inside one group. > 0: they owe me. */
+data class SettlementLine(
+    val userId: Long,
+    val name: String,
+    val groupId: Long,
+    val groupName: String,
+    val balance: Long,
+)
+
+/** Spending on one day, in grosze. date is LocalDate.toEpochDay(). */
+data class DayTotal(
+    val date: Long,
+    val total: Long,
+)
+
+/** One expense flattened for CSV export. shares is "Name:grosze|Name:grosze". */
+data class ExpenseExportRow(
+    val date: Long,
+    val groupName: String,
+    val description: String,
+    val category: String?,
+    val payerName: String,
+    val amount: Long,
+    val isSettlement: Boolean,
+    val shares: String?,
 )
 
 /** Net balance between the phone owner and one other person, across all groups. */

@@ -37,7 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fairshare.data.db.PersonBalance
+import com.fairshare.data.db.SettlementLine
 import com.fairshare.data.model.Money
 import com.fairshare.ui.components.BackHeader
 import com.fairshare.ui.components.EmptyHint
@@ -55,13 +55,14 @@ fun RozliczScreen(
     onBack: () -> Unit = {},
     viewModel: RozliczViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
-    val balances by viewModel.personBalances.collectAsStateWithLifecycle()
+    val lines: List<SettlementLine> by viewModel.lines.collectAsStateWithLifecycle(initialValue = emptyList())
 
-    val toPay = balances.filter { it.balance < 0 }
-    val toReceive = balances.filter { it.balance > 0 }
+    // W nowym modelu SettlementLine: balans < 0 to Ty oddajesz, balans > 0 to oddają tobie
+    val toPay = lines.filter { it.balance < 0 }
+    val toReceive = lines.filter { it.balance > 0 }
 
-    val totalToPay = toPay.sumOf { kotlin.math.abs(it.balance) }
-    val totalToReceive = toReceive.sumOf { it.balance }
+    val totalToPay: Long = toPay.sumOf { kotlin.math.abs(it.balance).toLong() }
+    val totalToReceive: Long = toReceive.sumOf { it.balance.toLong() }
 
     Column(
         modifier = Modifier
@@ -86,15 +87,15 @@ fun RozliczScreen(
         if (toPay.isEmpty()) {
             EmptyHint("Nie masz nic do oddania.")
         } else {
-            toPay.forEach { person ->
+            toPay.forEach { line ->
                 SettlementRow(
-                    name = person.name,
-                    amount = Money.format(kotlin.math.abs(person.balance)),
-                    context = person.groupNames ?: "Grupa",
+                    name = line.name,
+                    amount = Money.format(kotlin.math.abs(line.balance)),
+                    context = line.groupName,
                     amountColor = Negative,
                 ) {
                     FilledTonalButton(
-                        onClick = { viewModel.settleUp(person) },
+                        onClick = { viewModel.settle(line, kotlin.math.abs(line.balance)) },
                         modifier = Modifier.height(40.dp)
                     ) {
                         Text("Zapisz spłatę")
@@ -107,15 +108,15 @@ fun RozliczScreen(
         if (toReceive.isEmpty()) {
             EmptyHint("Nikt nie jest ci winien.")
         } else {
-            toReceive.forEach { person ->
+            toReceive.forEach { line ->
                 SettlementRow(
-                    name = person.name,
-                    amount = Money.format(person.balance),
-                    context = person.groupNames ?: "Grupa",
+                    name = line.name,
+                    amount = Money.format(line.balance),
+                    context = line.groupName,
                     amountColor = Positive,
                 ) {
                     OutlinedButton(
-                        onClick = { viewModel.settleUp(person) },
+                        onClick = { viewModel.settle(line, line.balance) },
                         modifier = Modifier.height(40.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
@@ -178,7 +179,6 @@ private fun SettlementRow(
     amountColor: Color,
     action: @Composable () -> Unit,
 ) {
-    // Dynamicznie wybiera jeden z dostępnych kolorów z AvatarColors na podstawie imienia
     val avatarColor = remember(name) {
         val colors = AvatarColors.values()
         colors[(name.hashCode() and 0x7FFFFFFF) % colors.size]

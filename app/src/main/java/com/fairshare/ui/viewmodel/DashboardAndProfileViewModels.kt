@@ -1,20 +1,37 @@
 package com.fairshare.ui.viewmodel
 
+import android.app.Application
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import androidx.core.content.FileProvider
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fairshare.data.AppSettings
 import com.fairshare.data.FairShareRepository
 import com.fairshare.data.db.ActivityLogEntity
 import com.fairshare.data.db.CategoryTotal
 import com.fairshare.data.db.GroupSummary
 import com.fairshare.data.db.PersonBalance
+import com.fairshare.data.db.SettlementLine
 import com.fairshare.data.db.UserEntity
 import com.fairshare.data.model.Money
+import com.fairshare.ui.ProfilePhotos
+import com.fairshare.ui.components.monthShortName
+import com.fairshare.ui.notifyIfEnabled
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.time.LocalDate
 import java.time.YearMonth
 
 data class DashboardUiState(
@@ -39,7 +56,11 @@ class DashboardViewModel(repository: FairShareRepository) : ViewModel() {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DashboardUiState(month = month))
 }
 
-class ProfileViewModel(private val repository: FairShareRepository) : ViewModel() {
+class ProfileViewModel(
+    private val app: Application,
+    private val repository: FairShareRepository,
+    val settings: AppSettings,
+) : ViewModel() {
     val me: StateFlow<UserEntity?> = repository.me
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -52,70 +73,190 @@ class ProfileViewModel(private val repository: FairShareRepository) : ViewModel(
     }
 
     fun updateCurrency(currency: String) {
-        viewModelScope.launch { repository.updateCurrency(currency) }
+        viewModelScope.launch {
+            repository.updateCurrency(currency)
+            Money.currencyCode = currency
+        }
     }
 
-    fun updatePhotoUri(photoUri: String) {
-        viewModelScope.launch { repository.updatePhotoUri(photoUri) }
+    fun savePhoto(uri: Uri) {
+        viewModelScope.launch {
+            val stored = withContext(Dispatchers.IO) { ProfilePhotos.save(app, uri) }
+            repository.updatePhotoUri(stored)
+        }
     }
 
-    fun updatePhotoBitmap(bitmap: Bitmap) {
-        // Obraz przekazany tymczasowo w pamięci aplikacji
-        viewModelScope.launch { repository.updatePhotoUri("bitmap_cache") }
+    fun savePhoto(bitmap: Bitmap) {
+        viewModelScope.launch {
+            val stored = withContext(Dispatchers.IO) { ProfilePhotos.save(app, bitmap) }
+            repository.updatePhotoUri(stored)
+        }
     }
+
+    fun setTheme(mode: String) = settings.setTheme(mode)
+
+    fun setNotifications(enabled: Boolean) = settings.setNotifications(enabled)
+
+    fun addCustomCategory(name: String) = settings.addCustomCategory(name)
+
+    fun removeCustomCategory(name: String) = settings.removeCustomCategory(name)
 
     fun deleteAllData() {
-        viewModelScope.launch { repository.deleteAllData() }
-    }
-}
-
-class RozliczViewModel(private val repository: FairShareRepository) : ViewModel() {
-    val personBalances: StateFlow<List<PersonBalance>> = repository.personBalances
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    val groups: StateFlow<List<GroupSummary>> = repository.groupSummaries
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-
-    fun settleUp(person: PersonBalance) {
         viewModelScope.launch {
-            val activeGroup = groups.value.firstOrNull() ?: return@launch
-            val amountToSettle = kotlin.math.abs(person.balance)
-            repository.settleUp(
-                targetUserId = person.userId,
-                amountGrosze = amountToSettle,
-                groupId = activeGroup.id
-            )
+            repository.deleteAllData()
+            withContext(Dispatchers.IO) { ProfilePhotos.delete(app) }
+        }
+    }
+
+    fun exportCsv(onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val csv = repository.buildExpensesCsv()
+                val uri = withContext(Dispatchers.IO) {
+                    val dir = File(app.cacheDir, "exports").apply { mkdirs() }
+                    val file = File(dir, "fairshare.csv")
+                    file.writeText(csv)
+                    FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
+                }
+                val share = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "Fair Share — wydatki")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                app.startActivity(Intent.createChooser(share, "Eksport CSV").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                onError(e.message ?: "Nie udało się wyeksportować danych")
+            }
         }
     }
 }
+
+class RozliczViewModel(
+    private val app: Application,
+    private val repository: FairShareRepository,
+    private val settings: AppSettings,
+) : ViewModel() {
+    val me: StateFlow<UserEntity?> = repository.me
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val lines: StateFlow<List<SettlementLine>> = repository.settlementLines
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun settle(line: SettlementLine, amountGrosze: Long) {
+        viewModelScope.launch {
+            repository.settleUp(line.groupId, line.userId, line.balance, amountGrosze)
+            val title = if (line.balance < 0) "Spłata zapisana" else "Rozliczenie zapisane"
+            app.notifyIfEnabled(settings, title, "${line.name} · ${Money.format(amountGrosze)}")
+        }
+    }
+}
+
+enum class SpendScope { MY_SHARE, ALL }
 
 data class StatystykiUiState(
     val month: YearMonth = YearMonth.now(),
     val monthTotal: Long = 0L,
     val categories: List<CategoryTotal> = emptyList(),
-    val monthlyHistory: List<Pair<String, Long>> = emptyList()
+    val monthlyHistory: List<Pair<String, Long>> = emptyList(),
+    val groups: List<GroupSummary> = emptyList(),
+    val selectedGroupId: Long = -1L,
+    val scopeMine: Boolean = true,
+    val budgetGrosze: Long = 0L,
 )
 
-class StatystykiViewModel(private val repository: FairShareRepository) : ViewModel() {
-    private val currentMonth = YearMonth.now()
+@OptIn(ExperimentalCoroutinesApi::class)
+class StatystykiViewModel(
+    savedStateHandle: SavedStateHandle,
+    private val repository: FairShareRepository,
+    private val settings: AppSettings,
+) : ViewModel() {
+    private val month = MutableStateFlow(YearMonth.now())
+    private val groupId = MutableStateFlow(savedStateHandle.get<Long>("groupId")?.takeIf { it > 0 } ?: -1L)
+    private val scope = MutableStateFlow(SpendScope.MY_SHARE)
+
+    val monthOptions: List<YearMonth> = (0 until 18).map { YearMonth.now().minusMonths(it.toLong()) }
 
     val state: StateFlow<StatystykiUiState> = combine(
-        repository.observeTotalSpentInRange(currentMonth),
-        repository.observeMyCategoryTotals(currentMonth)
-    ) { total, categories ->
-        StatystykiUiState(
-            month = currentMonth,
-            monthTotal = total,
-            categories = categories,
-            monthlyHistory = listOf(
-                "maj" to 0L, "cze" to 0L, "lip" to 0L,
-                "sie" to 0L, "wrz" to 0L, "paź" to total
+        month,
+        groupId,
+        scope,
+        repository.groupSummaries,
+        settings.monthlyBudgetGrosze,
+    ) { selectedMonth, selectedGroup, selectedScope, groups, budget ->
+        Filter(selectedMonth, selectedGroup, selectedScope, groups, budget)
+    }.flatMapLatest { filter ->
+        val from = filter.month.minusMonths(5).atDay(1).toEpochDay()
+        val to = filter.month.atEndOfMonth().toEpochDay()
+        val days = if (filter.scope == SpendScope.MY_SHARE) {
+            repository.observeMyShareByDay(from, to, filter.groupId)
+        } else {
+            repository.observeAllSpendingByDay(from, to, filter.groupId)
+        }
+        val categories = if (filter.scope == SpendScope.MY_SHARE) {
+            repository.observeMyCategoryTotals(filter.month, filter.groupId)
+        } else {
+            repository.observeAllCategoryTotals(filter.month, filter.groupId)
+        }
+        combine(days, categories) { dayTotals, categoryTotals ->
+            val monthStart = filter.month.atDay(1).toEpochDay()
+            val monthEnd = filter.month.atEndOfMonth().toEpochDay()
+            val history = (5 downTo 0).map { offset ->
+                val itemMonth = filter.month.minusMonths(offset.toLong())
+                val start = itemMonth.atDay(1).toEpochDay()
+                val end = itemMonth.atEndOfMonth().toEpochDay()
+                val sum = dayTotals.filter { it.date in start..end }.sumOf { it.total }
+                monthShortName(itemMonth.atDay(1)) to sum
+            }
+            StatystykiUiState(
+                month = filter.month,
+                monthTotal = dayTotals.filter { it.date in monthStart..monthEnd }.sumOf { it.total },
+                categories = categoryTotals,
+                monthlyHistory = history,
+                groups = filter.groups,
+                selectedGroupId = filter.groupId,
+                scopeMine = filter.scope == SpendScope.MY_SHARE,
+                budgetGrosze = filter.budget,
             )
-        )
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), StatystykiUiState())
+
+    fun selectMonth(value: YearMonth) {
+        month.value = value
+    }
+
+    fun selectGroup(id: Long) {
+        groupId.value = id
+    }
+
+    fun toggleScope() {
+        scope.value = if (scope.value == SpendScope.MY_SHARE) SpendScope.ALL else SpendScope.MY_SHARE
+    }
+
+    fun setBudget(grosze: Long) = settings.setMonthlyBudget(grosze)
+
+    private data class Filter(
+        val month: YearMonth,
+        val groupId: Long,
+        val scope: SpendScope,
+        val groups: List<GroupSummary>,
+        val budget: Long,
+    )
 }
 
 class AktywnoscViewModel(private val repository: FairShareRepository) : ViewModel() {
     val logs: StateFlow<List<ActivityLogEntity>> = repository.activityLogsList
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val unread: StateFlow<Int> = repository.unreadActivityCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun markAllRead() {
+        viewModelScope.launch { repository.markAllActivitySeen() }
+    }
+
+    fun markRead(id: Long) {
+        viewModelScope.launch { repository.markActivitySeen(id) }
+    }
 }
