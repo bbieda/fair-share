@@ -27,11 +27,13 @@ fun TextInputDialog(
     onConfirm: (String) -> Unit,
     initialValue: String = "",
     validate: ((String) -> String?)? = null,
+    /** True lets the user confirm an empty field (e.g. to clear payment details). */
+    allowEmpty: Boolean = false,
     extraContent: @Composable () -> Unit = {},
 ) {
     var text by rememberSaveable { mutableStateOf(initialValue) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
-    val canConfirm = text.isNotBlank()
+    val canConfirm = allowEmpty || text.isNotBlank()
     val confirm = {
         if (canConfirm) {
             val message = validate?.invoke(text.trim())

@@ -29,6 +29,9 @@ interface UserDao {
 
     @Query("SELECT * FROM users WHERE id = :id")
     suspend fun getById(id: Long): UserEntity?
+
+    @Query("UPDATE users SET paymentDetails = :details WHERE id = :userId")
+    suspend fun setPaymentDetails(userId: Long, details: String?)
 }
 
 @Dao
@@ -110,6 +113,22 @@ interface ExpenseDao {
 
     @Query("DELETE FROM expenses WHERE id = :expenseId")
     suspend fun deleteExpense(expenseId: Long)
+
+    @Query("SELECT userId FROM expense_shares WHERE expenseId = :expenseId")
+    suspend fun getShareUserIds(expenseId: Long): List<Long>
+
+    /** Current balance between me and one person inside one group. > 0: they owe me. */
+    @Query(
+        """
+        SELECT COALESCE((SELECT SUM(s.amount) FROM expense_shares s
+                INNER JOIN expenses e ON e.id = s.expenseId
+                WHERE e.groupId = :groupId AND e.payerId = :meId AND s.userId = :otherId), 0)
+            - COALESCE((SELECT SUM(s.amount) FROM expense_shares s
+                INNER JOIN expenses e ON e.id = s.expenseId
+                WHERE e.groupId = :groupId AND e.payerId = :otherId AND s.userId = :meId), 0)
+        """
+    )
+    suspend fun getPairBalance(groupId: Long, meId: Long, otherId: Long): Long
 
     @Query(
         """
@@ -206,6 +225,7 @@ interface ExpenseDao {
     @Query(
         """
         SELECT u.id AS userId, u.name AS name, g.id AS groupId, g.name AS groupName,
+            u.paymentDetails AS paymentDetails,
             COALESCE((SELECT SUM(s.amount) FROM expense_shares s
                 INNER JOIN expenses e ON e.id = s.expenseId
                 WHERE e.groupId = g.id AND e.payerId = :meId AND s.userId = u.id), 0)
@@ -247,6 +267,18 @@ interface ActivityLogDao {
 
     @Query("SELECT * FROM activity_logs ORDER BY timestamp DESC")
     fun observeAll(): Flow<List<ActivityLogEntity>>
+
+    @Query(
+        """
+        SELECT a.id AS id, a.groupId AS groupId, g.name AS groupName,
+            a.actionType AS actionType, a.description AS description,
+            a.seen AS seen, a.involvesMe AS involvesMe, a.timestamp AS timestamp
+        FROM activity_logs a
+        LEFT JOIN friend_groups g ON g.id = a.groupId
+        ORDER BY a.timestamp DESC, a.id DESC
+        """
+    )
+    fun observeItems(): Flow<List<ActivityItem>>
 
     @Query("SELECT COUNT(*) FROM activity_logs WHERE seen = 0")
     fun observeUnreadCount(): Flow<Int>

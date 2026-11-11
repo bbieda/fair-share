@@ -2,7 +2,6 @@ package com.fairshare.ui.viewmodel
 
 import android.app.Application
 import android.content.Intent
-import android.graphics.Bitmap
 import android.net.Uri
 import androidx.core.content.FileProvider
 import androidx.lifecycle.SavedStateHandle
@@ -10,7 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fairshare.data.AppSettings
 import com.fairshare.data.FairShareRepository
-import com.fairshare.data.db.ActivityLogEntity
+import com.fairshare.data.db.ActivityItem
 import com.fairshare.data.db.CategoryTotal
 import com.fairshare.data.db.GroupSummary
 import com.fairshare.data.db.PersonBalance
@@ -79,18 +78,31 @@ class ProfileViewModel(
         }
     }
 
-    fun savePhoto(uri: Uri) {
+    /** Saves a picture from the gallery or from the camera as the profile photo. */
+    fun savePhoto(uri: Uri, onError: (String) -> Unit = {}) {
         viewModelScope.launch {
-            val stored = withContext(Dispatchers.IO) { ProfilePhotos.save(app, uri) }
-            repository.updatePhotoUri(stored)
+            try {
+                val stored = withContext(Dispatchers.IO) { ProfilePhotos.save(app, uri) }
+                repository.updatePhotoUri(stored)
+            } catch (e: Exception) {
+                onError(e.message ?: "Nie udało się zapisać zdjęcia")
+            }
         }
     }
 
-    fun savePhoto(bitmap: Bitmap) {
+    fun removePhoto() {
         viewModelScope.launch {
-            val stored = withContext(Dispatchers.IO) { ProfilePhotos.save(app, bitmap) }
-            repository.updatePhotoUri(stored)
+            withContext(Dispatchers.IO) { ProfilePhotos.delete(app) }
+            repository.updatePhotoUri(null)
         }
+    }
+
+    /** Empty file the camera app can write the new profile photo into (shared through FileProvider). */
+    fun newCameraUri(): Uri {
+        val dir = File(app.cacheDir, "avatars").apply { mkdirs() }
+        dir.listFiles()?.forEach { it.delete() }
+        val file = File(dir, "avatar_${System.currentTimeMillis()}.jpg")
+        return FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", file)
     }
 
     fun setTheme(mode: String) = settings.setTheme(mode)
@@ -104,6 +116,7 @@ class ProfileViewModel(
     fun deleteAllData() {
         viewModelScope.launch {
             repository.deleteAllData()
+            settings.resetData()
             withContext(Dispatchers.IO) { ProfilePhotos.delete(app) }
         }
     }
@@ -144,12 +157,21 @@ class RozliczViewModel(
     val lines: StateFlow<List<SettlementLine>> = repository.settlementLines
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun settle(line: SettlementLine, amountGrosze: Long) {
+    /** Records a full or partial repayment. [onError] gets a message the screen can show. */
+    fun settle(line: SettlementLine, amountGrosze: Long, onError: (String) -> Unit = {}) {
         viewModelScope.launch {
-            repository.settleUp(line.groupId, line.userId, line.balance, amountGrosze)
-            val title = if (line.balance < 0) "Spłata zapisana" else "Rozliczenie zapisane"
-            app.notifyIfEnabled(settings, title, "${line.name} · ${Money.format(amountGrosze)}")
+            try {
+                repository.settleUp(line.groupId, line.userId, amountGrosze)
+                val title = if (line.balance < 0) "Spłata zapisana" else "Rozliczenie zapisane"
+                app.notifyIfEnabled(settings, title, "${line.name} · ${Money.format(amountGrosze)}")
+            } catch (e: IllegalArgumentException) {
+                onError(e.message ?: "Nie udało się zapisać spłaty")
+            }
         }
+    }
+
+    fun savePaymentDetails(userId: Long, details: String) {
+        viewModelScope.launch { repository.updatePersonPaymentDetails(userId, details) }
     }
 }
 
@@ -246,7 +268,7 @@ class StatystykiViewModel(
 }
 
 class AktywnoscViewModel(private val repository: FairShareRepository) : ViewModel() {
-    val logs: StateFlow<List<ActivityLogEntity>> = repository.activityLogsList
+    val logs: StateFlow<List<ActivityItem>> = repository.activityItems
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val unread: StateFlow<Int> = repository.unreadActivityCount

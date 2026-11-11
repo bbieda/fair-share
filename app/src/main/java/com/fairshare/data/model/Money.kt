@@ -1,5 +1,8 @@
 package com.fairshare.data.model
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -7,9 +10,11 @@ import java.math.RoundingMode
 object Money {
     private const val NBSP = ' '
 
-    /** Updated from the signed-in profile so every screen formats with the chosen currency. */
-    @Volatile
-    var currencyCode: String = "PLN"
+    /**
+     * Updated from the profile so every screen formats with the chosen currency.
+     * It is Compose state, so screens redraw when the currency changes.
+     */
+    var currencyCode: String by mutableStateOf("PLN")
 
     /**
      * Parses user input like "12", "12,5", "12.50", "1 234,99" into grosze.

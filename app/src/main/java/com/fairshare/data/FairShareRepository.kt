@@ -1,6 +1,7 @@
 package com.fairshare.data
 
 import androidx.room.withTransaction
+import com.fairshare.data.db.ActivityItem
 import com.fairshare.data.db.ActivityLogEntity
 import com.fairshare.data.db.CategoryTotal
 import com.fairshare.data.db.DayTotal
@@ -54,7 +55,7 @@ class FairShareRepository(private val db: FairShareDatabase) {
 
     suspend fun updatePaymentDetails(details: String) {
         val meUser = users.getMe() ?: return
-        users.update(meUser.copy(paymentDetails = details.trim()))
+        users.update(meUser.copy(paymentDetails = details.trim().ifEmpty { null }))
         logActivity("PROFILE_UPDATE", "Zaktualizowano dane do spłat")
     }
 
@@ -67,20 +68,35 @@ class FairShareRepository(private val db: FairShareDatabase) {
     suspend fun updatePhotoUri(photoUri: String?) {
         val meUser = users.getMe() ?: return
         users.update(meUser.copy(photoUri = photoUri))
-        logActivity("PROFILE_UPDATE", "Zaktualizowano zdjęcie profilowe")
+        val text = if (photoUri == null) "Usunięto zdjęcie profilowe" else "Zaktualizowano zdjęcie profilowe"
+        logActivity("PROFILE_UPDATE", text)
+    }
+
+    /** Payment details (account number, BLIK...) of any person, e.g. a friend I have to pay back. */
+    suspend fun updatePersonPaymentDetails(userId: Long, details: String) {
+        users.setPaymentDetails(userId, details.trim().ifEmpty { null })
     }
 
     // ---------- Activity Logs ----------
 
     val activityLogsList: Flow<List<ActivityLogEntity>> = activityLogs.observeAll()
 
-    suspend fun logActivity(actionType: String, description: String, groupId: Long? = null) {
+    /** Activity log rows with the group name, newest first. */
+    val activityItems: Flow<List<ActivityItem>> = activityLogs.observeItems()
+
+    suspend fun logActivity(
+        actionType: String,
+        description: String,
+        groupId: Long? = null,
+        involvesMe: Boolean = true,
+    ) {
         activityLogs.insert(
             ActivityLogEntity(
                 groupId = groupId,
                 actionType = actionType,
                 description = description,
-                timestamp = System.currentTimeMillis()
+                timestamp = System.currentTimeMillis(),
+                involvesMe = involvesMe,
             )
         )
     }
@@ -107,8 +123,11 @@ class FairShareRepository(private val db: FairShareDatabase) {
         val clean = requireNotNull(name.cleanName()) { "Imię nie może być puste" }
         return db.withTransaction {
             val userId = users.findOtherByName(clean)?.id ?: users.insert(UserEntity(name = clean))
-            groups.insertMember(GroupMemberEntity(groupId = groupId, userId = userId))
-            logActivity("ADD_MEMBER", "Dodano użytkownika $clean do grupy", groupId)
+            // Adding someone who is already in the group must not create a second log entry
+            if (userId !in groups.getMemberIds(groupId)) {
+                groups.insertMember(GroupMemberEntity(groupId = groupId, userId = userId))
+                logActivity("ADD_MEMBER", "Dodano $clean do grupy", groupId)
+            }
             userId
         }
     }
@@ -189,46 +208,55 @@ class FairShareRepository(private val db: FairShareDatabase) {
                 }
             )
             val action = if (isSettlement) "SETTLEMENT" else "ADD_EXPENSE"
+            val payerName = users.getById(payerId)?.name ?: "Ktoś"
             val text = if (isSettlement) {
-                "Zarejestrowano spłatę na kwotę ${Money.format(amount)}"
+                "$cleanDesc · ${Money.format(amount)}"
             } else {
-                "Dodano wydatek „$cleanDesc” na kwotę ${Money.format(amount)}"
+                "Dodano wydatek „$cleanDesc” · $payerName zapłacił(a) ${Money.format(amount)}"
             }
-            logActivity(action, text, groupId)
+            val myId = requireMeId()
+            logActivity(action, text, groupId, involvesMe = payerId == myId || myId in shares.keys)
             expenseId
         }
     }
 
     /**
-     * Records a repayment inside one group.
-     * [signedBalance] is the current balance with that person in the group (> 0 they owe me).
+     * Records a repayment between me and [otherUserId] inside one group.
+     * The balance is read again from the database, so a stale screen cannot record a wrong amount.
      * [amountGrosze] may be the full debt or a part of it.
      */
-    suspend fun settleUp(groupId: Long, otherUserId: Long, signedBalance: Long, amountGrosze: Long) {
+    suspend fun settleUp(groupId: Long, otherUserId: Long, amountGrosze: Long) {
         require(amountGrosze > 0) { "Kwota rozliczenia musi być większa od zera" }
-        require(abs(signedBalance) >= amountGrosze) { "Kwota jest większa niż saldo w tej grupie" }
-        val myId = requireMeId()
-        val iOweThem = signedBalance < 0
-        val payerId = if (iOweThem) myId else otherUserId
-        val shareUserId = if (iOweThem) otherUserId else myId
-        val otherName = users.getById(otherUserId)?.name ?: "osobę"
-        val description = if (iOweThem) "Spłata dla $otherName" else "Spłata od $otherName"
-        addExpense(
-            groupId = groupId,
-            payerId = payerId,
-            amount = amountGrosze,
-            description = description,
-            category = null,
-            date = LocalDate.now(),
-            shares = mapOf(shareUserId to amountGrosze),
-            isSettlement = true,
-        )
+        db.withTransaction {
+            val myId = requireMeId()
+            val signedBalance = expenses.getPairBalance(groupId, myId, otherUserId)
+            require(signedBalance != 0L) { "Z tą osobą nie ma już nic do rozliczenia" }
+            require(abs(signedBalance) >= amountGrosze) { "Kwota jest większa niż saldo w tej grupie" }
+            val iOweThem = signedBalance < 0
+            val payerId = if (iOweThem) myId else otherUserId
+            val shareUserId = if (iOweThem) otherUserId else myId
+            val otherName = users.getById(otherUserId)?.name ?: "osobę"
+            val description = if (iOweThem) "Spłata dla $otherName" else "Spłata od $otherName"
+            addExpense(
+                groupId = groupId,
+                payerId = payerId,
+                amount = amountGrosze,
+                description = description,
+                category = null,
+                date = LocalDate.now(),
+                shares = mapOf(shareUserId to amountGrosze),
+                isSettlement = true,
+            )
+        }
     }
 
     suspend fun deleteExpense(expenseId: Long) {
         val expense = expenses.getExpense(expenseId) ?: return
+        val myId = requireMeId()
+        val involvesMe = expense.payerId == myId || myId in expenses.getShareUserIds(expenseId)
         expenses.deleteExpense(expenseId)
-        logActivity("DELETE_EXPENSE", "Usunięto wydatek „${expense.description}”", expense.groupId)
+        val what = if (expense.isSettlement) "spłatę" else "wydatek"
+        logActivity("DELETE_EXPENSE", "Usunięto $what „${expense.description}”", expense.groupId, involvesMe)
     }
 
     suspend fun buildExpensesCsv(): String {

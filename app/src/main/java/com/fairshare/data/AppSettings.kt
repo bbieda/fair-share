@@ -50,6 +50,13 @@ class AppSettings(context: Context) {
         writeCategories(_categories.value.filterNot { it.equals(name, ignoreCase = true) })
     }
 
+    /** Clears budget and custom categories (used by "delete all data"). Theme and notifications stay. */
+    fun resetData() {
+        prefs.edit().remove(KEY_BUDGET).remove(KEY_CATS).apply()
+        _budget.value = 0L
+        _categories.value = emptyList()
+    }
+
     private fun readCategories(): List<String> =
         prefs.getStringSet(KEY_CATS, emptySet()).orEmpty().toList().sorted()
 

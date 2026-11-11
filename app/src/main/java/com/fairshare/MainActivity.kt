@@ -6,7 +6,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.fairshare.data.AppSettings
@@ -31,7 +31,9 @@ class MainActivity : ComponentActivity() {
                 AppSettings.THEME_SYSTEM -> systemDark
                 else -> true
             }
-            SideEffect { Money.currencyCode = me?.defaultCurrency ?: "PLN" }
+            // Money.currencyCode is Compose state, so every screen redraws when the currency changes
+            val currency = me?.defaultCurrency ?: "PLN"
+            LaunchedEffect(currency) { Money.currencyCode = currency }
             FairShareTheme(darkTheme = dark) {
                 FairShareApp()
             }

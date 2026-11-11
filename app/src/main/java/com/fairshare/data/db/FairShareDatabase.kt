@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
@@ -15,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExpenseShareEntity::class,
         ActivityLogEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class FairShareDatabase : RoomDatabase() {
@@ -31,6 +32,8 @@ abstract class FairShareDatabase : RoomDatabase() {
         fun build(context: Context): FairShareDatabase =
             Room.databaseBuilder(context.applicationContext, FairShareDatabase::class.java, FILE_NAME)
                 .addCallback(SeedCallback)
+                .addMigrations(MIGRATION_3_4)
+                // Only for very old test databases (1 and 2); 3 -> 4 keeps the user's data
                 .fallbackToDestructiveMigration()
                 .build()
 
@@ -38,6 +41,13 @@ abstract class FairShareDatabase : RoomDatabase() {
         private object SeedCallback : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 db.execSQL(INSERT_ME, arrayOf<Any>(DEFAULT_MY_NAME, System.currentTimeMillis()))
+            }
+        }
+
+        /** Adds the "involvesMe" flag to the activity log. Old rows count as "involves me". */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE activity_logs ADD COLUMN involvesMe INTEGER NOT NULL DEFAULT 1")
             }
         }
 

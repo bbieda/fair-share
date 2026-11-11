@@ -135,7 +135,7 @@ class AddExpenseViewModel(
     }
 
     fun updateCustomShare(userId: Long, input: String) {
-        customShares = customShares + (userId to input.filter { it.isDigit() || it == ',' || it == '.' })
+        customShares = customShares + (userId to cleanAmountInput(input))
         error = null
     }
 
@@ -145,8 +145,18 @@ class AddExpenseViewModel(
     }
 
     fun updateAmount(input: String) {
-        amount = input.filter { it.isDigit() || it == ',' || it == '.' }
+        amount = cleanAmountInput(input)
         error = null
+    }
+
+    /** Keeps digits and one decimal separator with at most 2 digits after it. */
+    private fun cleanAmountInput(input: String): String {
+        val filtered = input.filter { it.isDigit() || it == ',' || it == '.' }
+        val separator = filtered.indexOfFirst { it == ',' || it == '.' }
+        if (separator < 0) return filtered
+        val whole = filtered.substring(0, separator)
+        val fraction = filtered.substring(separator + 1).filter { it.isDigit() }.take(2)
+        return whole + filtered[separator] + fraction
     }
 
     /**
@@ -207,6 +217,8 @@ class AddExpenseViewModel(
                 onSaved()
             } catch (e: IllegalArgumentException) {
                 error = e.message ?: "Nie udało się zapisać wydatku"
+            } catch (e: Exception) {
+                error = "Nie udało się zapisać wydatku. Spróbuj ponownie."
             } finally {
                 saving = false
             }

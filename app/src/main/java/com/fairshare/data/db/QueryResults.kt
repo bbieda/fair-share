@@ -49,6 +49,8 @@ data class SettlementLine(
     val groupId: Long,
     val groupName: String,
     val balance: Long,
+    /** How the other person wants to be paid (account number, BLIK...). */
+    val paymentDetails: String? = null,
 )
 
 /** Spending on one day, in grosze. date is LocalDate.toEpochDay(). */
@@ -82,4 +84,16 @@ data class CategoryTotal(
     /** ExpenseCategory name or null. */
     val category: String?,
     val total: Long,
+)
+
+/** One activity log row together with the name of its group. */
+data class ActivityItem(
+    val id: Long,
+    val groupId: Long?,
+    val groupName: String?,
+    val actionType: String,
+    val description: String,
+    val seen: Boolean,
+    val involvesMe: Boolean,
+    val timestamp: Long,
 )

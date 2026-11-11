@@ -1,5 +1,6 @@
 package com.fairshare.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -136,4 +137,6 @@ data class ActivityLogEntity(
     val description: String,
     val seen: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
+    /** True when the phone owner paid or has a share in it (used by the "Dotyczy mnie" filter). */
+    @ColumnInfo(defaultValue = "1") val involvesMe: Boolean = true,
 )

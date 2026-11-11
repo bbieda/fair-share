@@ -3,6 +3,7 @@ package com.fairshare.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -21,6 +22,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material.icons.outlined.PersonAdd
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ButtonDefaults
@@ -34,11 +38,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -48,7 +55,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fairshare.data.db.ExpenseListRow
 import com.fairshare.data.db.MemberBalance
 import com.fairshare.data.db.UserEntity
-import com.fairshare.data.model.ExpenseCategory
 import com.fairshare.data.model.Money
 import com.fairshare.ui.components.BackHeader
 import com.fairshare.ui.components.BalanceAmount
@@ -57,8 +63,13 @@ import com.fairshare.ui.components.EmptyHint
 import com.fairshare.ui.components.IconTile
 import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.TextInputDialog
+import com.fairshare.data.model.InviteCodes
 import com.fairshare.ui.components.avatarColorsFor
-import com.fairshare.ui.components.icon
+import com.fairshare.ui.components.categoryAvatarColors
+import com.fairshare.ui.components.categoryIcon
+import com.fairshare.ui.components.categoryLabel
+import com.fairshare.ui.components.dayLabel
+import androidx.compose.material.icons.outlined.Payments
 import com.fairshare.ui.components.initialOf
 import com.fairshare.ui.components.monthShortName
 import com.fairshare.ui.components.monthTitle
@@ -76,21 +87,59 @@ import java.time.YearMonth
 fun GrupaScreen(
     onBack: () -> Unit = {},
     onSettle: () -> Unit = {},
-    onOpenStats: () -> Unit = {},
+    onOpenStats: (groupId: Long) -> Unit = {},
     viewModel: GroupViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var showAddMember by rememberSaveable { mutableStateOf(false) }
     var expenseToDelete by rememberSaveable { mutableStateOf<Long?>(null) }
+    var expenseDetails by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showRename by rememberSaveable { mutableStateOf(false) }
+    var showCode by rememberSaveable { mutableStateOf(false) }
 
     GrupaContent(
         state = state,
+        groupId = viewModel.groupId,
         onBack = onBack,
         onSettle = onSettle,
-        onOpenStats = onOpenStats,
+        onOpenStats = { onOpenStats(viewModel.groupId) },
         onAddMember = { showAddMember = true },
-        onExpenseClick = { expenseToDelete = it },
+        onExpenseClick = { expenseDetails = it },
+        onRename = { showRename = true },
+        onShowCode = { showCode = true },
+        onToggleArchive = { viewModel.setArchived(!state.archived) },
     )
+
+    if (showRename) {
+        TextInputDialog(
+            title = "Nazwa grupy",
+            label = "Nazwa",
+            confirmLabel = "Zapisz",
+            initialValue = state.name,
+            onDismiss = { showRename = false },
+            onConfirm = viewModel::rename,
+        )
+    }
+
+    if (showCode) {
+        GroupCodeDialog(code = InviteCodes.format(viewModel.groupId), onDismiss = { showCode = false })
+    }
+
+    expenseDetails?.let { expenseId ->
+        val expense = state.expenses.firstOrNull { it.id == expenseId }
+        if (expense == null) {
+            expenseDetails = null
+        } else {
+            ExpenseDetailsDialog(
+                expense = expense,
+                onDismiss = { expenseDetails = null },
+                onDelete = {
+                    expenseDetails = null
+                    expenseToDelete = expenseId
+                },
+            )
+        }
+    }
 
     if (showAddMember) {
         AddMemberDialog(
@@ -104,8 +153,8 @@ fun GrupaScreen(
     expenseToDelete?.let { expenseId ->
         val title = state.expenses.firstOrNull { it.id == expenseId }?.description ?: "wydatek"
         ConfirmDialog(
-            title = "Usunąć wydatek?",
-            message = "„$title” zniknie z grupy, a salda zostaną przeliczone.",
+            title = "Usunąć wpis?",
+            message = "„$title” zniknie z grupy, a salda i statystyki zostaną przeliczone.",
             confirmLabel = "Usuń",
             onDismiss = { expenseToDelete = null },
             onConfirm = { viewModel.deleteExpense(expenseId) },
@@ -116,13 +165,18 @@ fun GrupaScreen(
 @Composable
 private fun GrupaContent(
     state: GroupUiState,
+    groupId: Long = 0L,
     onBack: () -> Unit = {},
     onSettle: () -> Unit = {},
     onOpenStats: () -> Unit = {},
     onAddMember: () -> Unit = {},
     onExpenseClick: (Long) -> Unit = {},
+    onRename: () -> Unit = {},
+    onShowCode: () -> Unit = {},
+    onToggleArchive: () -> Unit = {},
 ) {
     var showMembers by rememberSaveable { mutableStateOf(true) }
+    var menuOpen by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -131,9 +185,42 @@ private fun GrupaContent(
             .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 88.dp),
     ) {
         BackHeader(state.name, onBack) {
-            IconButton(onClick = {}, modifier = Modifier.size(44.dp)) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "Opcje grupy")
+            Box {
+                IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(44.dp)) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Opcje grupy")
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Zmień nazwę") },
+                        onClick = {
+                            menuOpen = false
+                            onRename()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Kod grupy") },
+                        onClick = {
+                            menuOpen = false
+                            onShowCode()
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (state.archived) "Przywróć z archiwum" else "Archiwizuj") },
+                        onClick = {
+                            menuOpen = false
+                            onToggleArchive()
+                        },
+                    )
+                }
             }
+        }
+        if (state.archived) {
+            Text(
+                "Ta grupa jest zarchiwizowana. Przywróć ją, żeby dodawać wydatki.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+            )
         }
 
         Row(
@@ -257,7 +344,8 @@ private fun GrupaContent(
                         modifier = Modifier.weight(1f),
                     )
                     Text(
-                        Money.format(monthExpenses.sumOf { it.amount }),
+                        // repayments move money between people, they are not spending
+                        Money.format(monthExpenses.filter { !it.isSettlement }.sumOf { it.amount }),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -297,12 +385,11 @@ private fun MemberRow(member: MemberBalance) {
 @Composable
 private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
     val date = LocalDate.ofEpochDay(expense.date)
-    val category = ExpenseCategory.fromKey(expense.category)
-    val colors = avatarColorsFor(category?.ordinal?.toLong() ?: 5L)
-    val subtitle = if (expense.payerIsMe) {
-        "Płaciłeś · ${Money.format(expense.amount)}"
-    } else {
-        "Płacił(a) ${expense.payerName} · ${Money.format(expense.amount)}"
+    val colors = categoryAvatarColors(expense.category)
+    val subtitle = when {
+        expense.isSettlement -> "Spłata · ${Money.format(expense.amount)}"
+        expense.payerIsMe -> "Płaciłeś · ${Money.format(expense.amount)}"
+        else -> "Płacił(a) ${expense.payerName} · ${Money.format(expense.amount)}"
     }
     val lentByMe = expense.amount - expense.myShare
 
@@ -319,7 +406,7 @@ private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
             Text(date.dayOfMonth.toString(), fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium)
         }
         IconTile(
-            category.icon,
+            if (expense.isSettlement) Icons.Outlined.Payments else categoryIcon(expense.category),
             colors.container,
             colors.content,
             size = 40.dp,
@@ -330,6 +417,14 @@ private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
             Text(subtitle, fontSize = 13.sp, lineHeight = 18.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
         }
         when {
+            // A repayment: I paid someone back (I was the payer) or someone paid me back
+            expense.isSettlement && expense.payerIsMe -> BalanceAmount("spłaciłeś", Money.format(expense.amount), positive = true)
+            expense.isSettlement && expense.myShare > 0 -> BalanceAmount("spłacono ci", Money.format(expense.amount), positive = false)
+            expense.isSettlement -> Text(
+                "nie dotyczy",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             expense.payerIsMe && lentByMe > 0 -> BalanceAmount("pożyczyłeś", Money.format(lentByMe), positive = true)
             !expense.payerIsMe && expense.myShare > 0 -> BalanceAmount("pożyczono ci", Money.format(expense.myShare), positive = false)
             else -> Text(
@@ -339,6 +434,61 @@ private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
             )
         }
     }
+}
+
+/** Details of one expense with the option to delete it. */
+@Composable
+private fun ExpenseDetailsDialog(expense: ExpenseListRow, onDismiss: () -> Unit, onDelete: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(expense.description) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                DetailLine("Kwota", Money.format(expense.amount))
+                DetailLine("Data", dayLabel(LocalDate.ofEpochDay(expense.date)))
+                DetailLine("Płacił(a)", if (expense.payerIsMe) "Ty" else expense.payerName)
+                if (!expense.isSettlement) {
+                    DetailLine("Kategoria", categoryLabel(expense.category))
+                    DetailLine("Uczestnicy", plural(expense.participantCount, "osoba", "osoby", "osób"))
+                    DetailLine("Twój udział", Money.format(expense.myShare))
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Zamknij") } },
+        dismissButton = {
+            TextButton(onClick = onDelete) { Text("Usuń", color = MaterialTheme.colorScheme.error) }
+        },
+    )
+}
+
+@Composable
+private fun DetailLine(label: String, value: String) {
+    Row(Modifier.fillMaxWidth()) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+        Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** Short code of the group, e.g. "FS-A". It can be typed in "Dołącz z kodu" on the Grupy tab. */
+@Composable
+private fun GroupCodeDialog(code: String, onDismiss: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Kod grupy") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(code, style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    "Grupa jest zapisana tylko na tym telefonie. Kod pozwala ją szybko otworzyć na zakładce Grupy.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Zamknij") } },
+        dismissButton = { TextButton(onClick = { clipboard.setText(AnnotatedString(code)) }) { Text("Kopiuj") } },
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

@@ -16,16 +16,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -99,13 +105,31 @@ fun GrupyScreen(
 ) {
     val groups by viewModel.groups.collectAsStateWithLifecycle()
     var showNewGroup by rememberSaveable { mutableStateOf(false) }
+    var showJoin by rememberSaveable { mutableStateOf(false) }
 
     GrupyContent(
         groups = groups,
         onOpenProfile = onOpenProfile,
         onOpenGroup = onOpenGroup,
         onNewGroup = { showNewGroup = true },
+        onJoinGroup = { showJoin = true },
     )
+
+    if (showJoin) {
+        JoinGroupDialog(
+            onDismiss = { showJoin = false },
+            onJoin = { code, onError ->
+                viewModel.openByInviteCode(
+                    code,
+                    onOpened = { groupId ->
+                        showJoin = false
+                        onOpenGroup(groupId)
+                    },
+                    onError = onError,
+                )
+            },
+        )
+    }
 
     if (showNewGroup) {
         TextInputDialog(
@@ -124,9 +148,12 @@ private fun GrupyContent(
     onOpenProfile: () -> Unit = {},
     onOpenGroup: (Long) -> Unit = {},
     onNewGroup: () -> Unit = {},
+    onJoinGroup: () -> Unit = {},
 ) {
     val active = groups.orEmpty().filter { !it.archived }.map { it.toItem() }
-    val archivedCount = groups.orEmpty().count { it.archived }
+    val archived = groups.orEmpty().filter { it.archived }.map { it.toItem() }
+    val archivedCount = archived.size
+    var showArchived by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -154,7 +181,7 @@ private fun GrupyContent(
         }
 
         Spacer(Modifier.height(8.dp))
-        OutlinedRow(modifier = Modifier.fillMaxWidth()) {
+        OutlinedRow(modifier = Modifier.fillMaxWidth(), onClick = { showArchived = !showArchived }) {
             Row(
                 modifier = Modifier
                     .height(56.dp)
@@ -168,10 +195,21 @@ private fun GrupyContent(
                     modifier = Modifier.weight(1f),
                 )
                 Icon(
-                    Icons.Outlined.ExpandMore,
+                    if (showArchived) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        if (showArchived) {
+            Spacer(Modifier.height(8.dp))
+            if (archived.isEmpty()) {
+                EmptyHint("Brak zarchiwizowanych grup.")
+            } else {
+                // Opening an archived group lets you restore it from the group menu
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    archived.forEach { group -> GroupCard(group, onClick = { onOpenGroup(group.id) }) }
+                }
             }
         }
 
@@ -186,14 +224,14 @@ private fun GrupyContent(
                 Text("Nowa grupa")
             }
             OutlinedButton(
-                onClick = {},
+                onClick = onJoinGroup,
                 modifier = Modifier.weight(1f).height(44.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.primary),
             ) {
                 Icon(Icons.Outlined.Link, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Dołącz z linku")
+                Text("Dołącz z kodu")
             }
         }
     }
@@ -260,4 +298,37 @@ private fun GrupyPreview() {
             )
         }
     }
+}
+
+/** Opens a group that lives on this phone by its short code, e.g. "FS-A". */
+@Composable
+private fun JoinGroupDialog(
+    onDismiss: () -> Unit,
+    onJoin: (code: String, onError: (String) -> Unit) -> Unit,
+) {
+    var code by rememberSaveable { mutableStateOf("") }
+    var error by rememberSaveable { mutableStateOf<String?>(null) }
+    val submit = { if (code.isNotBlank()) onJoin(code) { message -> error = message } }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Dołącz do grupy") },
+        text = {
+            OutlinedTextField(
+                value = code,
+                onValueChange = {
+                    code = it
+                    error = null
+                },
+                label = { Text("Kod grupy, np. FS-A") },
+                singleLine = true,
+                isError = error != null,
+                supportingText = error?.let { message -> { Text(message) } },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { submit() }, enabled = code.isNotBlank()) { Text("Otwórz") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Anuluj") } },
+    )
 }
