@@ -147,6 +147,145 @@ class RuleBasedReceiptParserTest {
         assertEquals(3753L, r.totalGrosze)
     }
 
+    private fun prices(text: String) = RuleBasedReceiptParser.parse(text.trimIndent()).let { r ->
+        Triple(r.totalGrosze, r.items.map { it.priceGrosze }, r.separateDepositGrosze)
+    }
+
+    @Test
+    fun `header broken by OCR spaces - the shop address is not an item`() {
+        val r = prices(
+            """
+            PYZIK
+            30-444 Libertów, ul.Jana Pawła |1 36
+            NIP 9442247469   nr:224776
+            PARAGON FI SKALNY
+            JAJA WIEJSKIE 10szt C
+            1szt x14.90 14,90C
+            TWARÓG 275g C
+            1szt x7,70 7,70C
+            SPRZEDAZ OPODATKOWANA C   22,60
+            SUMA PLN   22,60
+            """
+        )
+        assertEquals(Triple(2260L, listOf(1490L, 770L), 0L), r)
+    }
+
+    @Test
+    fun `Rossmann discount lines only say the price already includes the discount`() {
+        val r = prices(
+            """
+            Rossmann SDP SP. Z O.O.
+            PARAGON FISKALNY
+            FUSSWOHL DEZODORANT   2 x5,99 11,98A
+            Uwzgl. opust: -3,00 st. c 14,98
+            BELLA PERFECTA ULTRA   1 x6,99 6,99C
+            ALOUETTE CLASSIC   2 x11,99 23,98A
+            Uuzgl. opust: -4,00 st. c 27,98
+            SPRZEDAZ OPODATKOWANA A   35,96
+            SPRZEDAZ OPODATKOWANA C   6,99
+            SUMA PLN   42,95
+            """
+        )
+        assertEquals(Triple(4295L, listOf(1198L, 699L, 2398L), 0L), r)
+    }
+
+    @Test
+    fun `pharmacy - Bez recepty lines and the Sp op subtotal are not items`() {
+        val r = prices(
+            """
+            APTEKA
+            PARAGON FISKALNY
+            Reparil N żel 40 g
+            1op 39,99   39,99 B
+            Bez recepty   39,99
+            Hirudoid żel 100 g
+            1op 54,99   54,99 B
+            Bez recepty   54,99
+            Sp.op.B   94,98
+            PTU B= 8,00%   7,04
+            SUMA PLN   94,98
+            """
+        )
+        assertEquals(Triple(9498L, listOf(3999L, 5499L), 0L), r)
+    }
+
+    @Test
+    fun `garbled SPRZEDAZ OPODATKOWANA ends the items, VAT digit after a split price`() {
+        val r = prices(
+            """
+            PYZIK
+            PARAGON FISKALNY
+            Chupa Chups Lizak 15g A 1szt x4,50 4.50A
+            CHUPA CHUPS GUMA BALONOWA WATERMELON 20G
+            1szt x4,50 4 506
+            SPRLEDAE PODA TKWEA &   9.0
+            SNA PTU   1,56
+            SUMA PLN   9,00
+            """
+        )
+        assertEquals(Triple(900L, listOf(450L, 450L), 0L), r)
+    }
+
+    @Test
+    fun `line total cut off by OCR - quantity times unit price, the checksum fixes a misread total`() {
+        val r = prices(
+            """
+            Rossmann SDP SP. Z O.O.
+            PARAGON FISKALNY
+            FUSSWOHL DEZODORANT   26,99 11,98A
+            Uwzgl. opust:-3,00 st. c 14,98
+            BELLA PERFECTA ULTRA   1 x6,99 6,
+            ALOUETTE CLASSIC   2 x11,99 23,94
+            Uwzgl. opust: -4,00 st. c 27,98
+            SPRZEDAZ OPODATKOWANA A   35,96
+            SUMA PLN   42,95
+            """
+        )
+        assertEquals(Triple(4295L, listOf(1198L, 699L, 2398L), 0L), r)
+    }
+
+    @Test
+    fun `Biedronka - price after discount on the next name row, mangled line total`() {
+        val r = prices(
+            """
+            Biedronka
+            PARAGON FISKALNY
+            Renifer32cmNiebieski A   2 x14,99 29,98A
+            OPUST   -11,24A
+            Renifer32cmBez A   18,74
+            1 x14,99 t4,.99#
+            OPUST   -5,62A
+            9.37
+            Jaja Ściółk L 10szt C   1 x11.49 11.49C
+            OPUSTY ŁĄCZNIE   -16,86
+            Sp: A=28,11 C=11,49
+            SUMA PLN   39,60
+            """
+        )
+        assertEquals(Triple(3960L, listOf(1874L, 937L, 1149L), 0L), r)
+    }
+
+    @Test
+    fun `Carrefour - deposit printed between SUMA PLN and Do zaplaty`() {
+        val r = prices(
+            """
+            Carrefour EXPRESS
+            PARAGON FISKALNY
+            C_JOG.D/P SKYR   1*8,99= 8,99 C
+            A_NAPÓJ ENERG   1*7,99= 7,99 A
+            C_DESER BAKOMA   1*5,99= 5,99 C
+            Sprzed. opod. PTU A   7,99
+            SUMA PLN   22,97
+            Kaucja   0,50
+            Płatność   KARTA   23,47
+            Do   zapłaty   23,47
+            NIEFISKALNY
+            Dane: OPAKOWANIA ZWROTNE WYDANIA
+            """
+        )
+        assertEquals(Triple(2347L, listOf(899L, 799L, 599L), 50L), r)
+    }
+
     @Test
     fun `card terminal slip has a total but no items`() {
         val r = RuleBasedReceiptParser.parse(

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -73,6 +74,8 @@ import kotlin.math.abs
 fun SkanujParagonScreen(
     onBack: () -> Unit = {},
     onUse: (ScannedReceipt) -> Unit = {},
+    /** Several receipts in one photo, each as its own expense: the first goes to the form, the rest wait. */
+    onUseSeparately: (List<ScannedReceipt>) -> Unit = {},
     viewModel: ScanViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val vm = viewModel
@@ -94,12 +97,22 @@ fun SkanujParagonScreen(
     }
 
     val state = vm.state
+    val several = (state as? ScanViewModel.State.Done)?.outcome?.parts?.takeIf { it.size > 1 }
     Box(Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = if (state is ScanViewModel.State.Done) 168.dp else 24.dp),
+                .padding(
+                    start = 16.dp,
+                    end = 16.dp,
+                    top = 8.dp,
+                    bottom = when {
+                        several != null -> 232.dp
+                        state is ScanViewModel.State.Done -> 168.dp
+                        else -> 24.dp
+                    },
+                ),
         ) {
             BackHeader("Skanuj paragon", onBack)
             when (state) {
@@ -114,7 +127,9 @@ fun SkanujParagonScreen(
                     Spacer(Modifier.height(16.dp))
                     PhotoButtons(openCamera, openGallery)
                 }
-                is ScanViewModel.State.Done -> ScanResult(state.outcome, state.savedAs, vm.aiAvailable)
+                is ScanViewModel.State.Done ->
+                    if (several != null) SeveralReceipts(state.outcome, state.savedAs, onRetry = vm::retry)
+                    else ScanResult(state.outcome, state.savedAs, vm.aiAvailable, onRetry = vm::retry)
             }
         }
 
@@ -131,17 +146,50 @@ fun SkanujParagonScreen(
                     // the app's Scaffold already pads for the system navigation bar
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
                 ) {
-                    Button(
-                        onClick = { onUse(receipt) },
-                        enabled = receipt.totalGrosze != null,
-                        shape = RoundedCornerShape(28.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
-                    ) {
-                        Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Użyj w wydatku", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    if (several != null) {
+                        val receipts = several.map { it.receipt }
+                        val combined = ScannedReceipt.combine(receipts)
+                        Button(
+                            onClick = { onUse(combined) },
+                            enabled = combined.totalGrosze != null,
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                        ) {
+                            Text(
+                                "Jeden wydatek: ${combined.totalGrosze?.pln() ?: "?"}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        Button(
+                            onClick = { onUseSeparately(receipts) },
+                            enabled = receipts.all { it.totalGrosze != null },
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                        ) {
+                            Text(
+                                "Osobno: ${receipts.size} ${plural(receipts.size, "wydatek", "wydatki", "wydatków")}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = { onUse(receipt) },
+                            enabled = receipt.totalGrosze != null,
+                            shape = RoundedCornerShape(28.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp),
+                        ) {
+                            Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Użyj w wydatku", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                        }
                     }
                     OutlinedButton(
                         onClick = vm::reset,
@@ -166,6 +214,11 @@ private fun Intro(aiAvailable: Boolean, aiModel: String?) {
         Text(
             "Zrób zdjęcie całego paragonu, od nazwy sklepu do sumy. Najlepiej płasko, przy dobrym świetle.",
             style = MaterialTheme.typography.bodyLarge,
+        )
+        Text(
+            "Kilka paragonów naraz: połóż je obok siebie albo jeden pod drugim, z odstępem między nimi.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             "Tekst czyta ML Kit na telefonie, a reguły wyciągają z niego pozycje i sumę. " +
@@ -229,9 +282,18 @@ private fun Working(stage: String) {
 }
 
 @Composable
-private fun ScanResult(outcome: ReceiptScanner.Outcome, savedAs: String?, aiAvailable: Boolean) {
+private fun ScanResult(outcome: ReceiptScanner.Outcome, savedAs: String?, aiAvailable: Boolean, onRetry: () -> Unit) {
     val receipt = outcome.receipt
     var showOcr by remember { mutableStateOf(false) }
+
+    if (outcome.multipleSuspected) {
+        Banner(
+            Icons.Outlined.ErrorOutline,
+            "Na zdjęciu są chyba 2 paragony, ale nie dało się ich rozdzielić. Połóż je dalej od siebie albo zrób zdjęcie każdego osobno.",
+            Negative,
+        )
+        Spacer(Modifier.height(8.dp))
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 8.dp)) {
         Text(
@@ -276,11 +338,7 @@ private fun ScanResult(outcome: ReceiptScanner.Outcome, savedAs: String?, aiAvai
 
             val byRules = outcome.byRules
             when {
-                outcome.aiError != null -> Text(
-                    "Gemini nie pomogło: ${outcome.aiError}. Pokazuję odczyt reguł.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error,
-                )
+                outcome.aiError != null -> AiFailed(outcome.aiError, onRetry)
                 outcome.aiModel != null -> Text(
                     "Reguły: ${byRules.items.size} poz. na ${byRules.itemsSumGrosze.pln()}, suma " +
                         "${byRules.totalGrosze?.pln() ?: "nieznaleziona"}, więc zdjęcie poszło do Gemini" +
@@ -371,6 +429,99 @@ private fun ScanResult(outcome: ReceiptScanner.Outcome, savedAs: String?, aiAvai
     }
 }
 
+/** Gemini did not answer: what happened and a button to scan the same photo again. */
+@Composable
+private fun AiFailed(error: String?, onRetry: () -> Unit) {
+    Column {
+        Text(
+            "Gemini nie pomogło: $error. Pokazuję odczyt reguł.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error,
+        )
+        TextButton(onClick = onRetry) {
+            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Spróbuj ponownie")
+        }
+    }
+}
+
+/** A photo with several receipts: each one with its own checksum, the buttons below decide how to add them. */
+@Composable
+private fun SeveralReceipts(outcome: ReceiptScanner.Outcome, savedAs: String?, onRetry: () -> Unit) {
+    var showOcr by remember { mutableStateOf(false) }
+    Banner(
+        Icons.Outlined.Receipt,
+        "Na zdjęciu ${plural(outcome.parts.size, "jest", "są", "jest")} ${outcome.parts.size} " +
+            "${plural(outcome.parts.size, "paragon", "paragony", "paragonów")}. Dodaj je jako jeden wydatek albo każdy osobno.",
+        MaterialTheme.colorScheme.primary,
+    )
+    outcome.parts.forEachIndexed { index, part ->
+        val receipt = part.receipt
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            shape = RoundedCornerShape(16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(16.dp)) {
+                Text(
+                    "Paragon ${index + 1}: ${receipt.store ?: "nie rozpoznano sklepu"}",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    receipt.totalGrosze?.pln() ?: "Nie znaleziono sumy",
+                    fontSize = 28.sp,
+                    lineHeight = 34.sp,
+                    fontWeight = FontWeight.Medium,
+                )
+                SumBadge(receipt)
+                receipt.items.forEach { item ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        Text(item.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Text(item.priceGrosze.pln(), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                InfoLine(
+                    "Odczyt",
+                    receipt.source.label + if (receipt.source == ScanSource.GEMINI && part.aiModel != null) " · ${part.aiModel}" else "",
+                )
+                if (part.aiError != null) AiFailed(part.aiError, onRetry)
+            }
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    InfoLine("Czas", "łącznie ${duration(outcome.totalMs)} (ML Kit ${duration(outcome.ocrMs)})")
+    savedAs?.let { InfoLine("Zapis", "skany/$it (wersja debug)") }
+    TextButton(onClick = { showOcr = !showOcr }, modifier = Modifier.padding(top = 8.dp)) {
+        Icon(if (showOcr) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
+        Spacer(Modifier.width(4.dp))
+        Text(if (showOcr) "Ukryj tekst z ML Kit" else "Pokaż tekst z ML Kit (debug)")
+    }
+    if (showOcr) {
+        outcome.parts.forEachIndexed { index, part ->
+            Text("Paragon ${index + 1}", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 8.dp))
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    part.ocrText,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    softWrap = false,
+                    modifier = Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(12.dp),
+                )
+            }
+        }
+    }
+}
+
 /** Green when the items add up to the total (the receipt's own checksum), red with the difference otherwise. */
 @Composable
 private fun SumBadge(receipt: ScannedReceipt) {
@@ -432,6 +583,13 @@ private fun Long.pln(): String = Money.format(this)
 
 private fun duration(ms: Long): String =
     if (ms < 1000) "$ms ms" else String.format(Locale.forLanguageTag("pl-PL"), "%.1f s", ms / 1000.0)
+
+/** Polish plural: 1 paragon, 2–4 paragony (but 12–14 paragonów), 5+ paragonów. */
+private fun plural(count: Int, one: String, few: String, many: String): String = when {
+    count == 1 -> one
+    count % 10 in 2..4 && count % 100 !in 12..14 -> few
+    else -> many
+}
 
 /** "Biedronka · 12 pozycji" for the "Paragon" row of the expense form. */
 fun ScannedReceipt.summaryLine(): String {

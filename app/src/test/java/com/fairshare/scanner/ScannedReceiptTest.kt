@@ -116,6 +116,20 @@ class ScannedReceiptTest {
     }
 
     @Test
+    fun `rows of a tilted photo are matched after levelling`() {
+        // 1.5° downhill to the right: the price 900 px to the right sits ~24 px lower than its name, about a row gap
+        val dy = 24f
+        val lines = listOf(
+            OcrLine("Chleb", 10f, 100f, 200f, 130f),
+            OcrLine("5,49 C", 900f, 100f + dy, 1000f, 130f + dy),
+            OcrLine("Mleko", 10f, 128f, 200f, 158f),
+            OcrLine("3,20 C", 900f, 128f + dy, 1000f, 158f + dy),
+        )
+        assertEquals("Chleb   5,49 C\nMleko   3,20 C", ReceiptRows.rebuild(lines, tiltDegrees = 1.5f))
+        assertTrue(ReceiptRows.rebuild(lines) != "Chleb   5,49 C\nMleko   3,20 C")
+    }
+
+    @Test
     fun `OCR lines that overlap horizontally stay separate rows`() {
         val text = ReceiptRows.rebuild(
             listOf(
@@ -124,6 +138,37 @@ class ScannedReceiptTest {
             ),
         )
         assertEquals("PARAGON FISKALNY\nFISKALNY", text)
+    }
+
+    @Test
+    fun `a receipt read upside down scores lower than read the right way up`() {
+        val upright = """
+            Carrefour EXPRESS
+            PARAGON FISKALNY
+            C_JOG.D/P SKYR   1*8,99= 8,99 C
+            A_NAPOJ ENERG   1*7,99= 7,99 A
+            Sprzed. opod. PTU A   7,99
+            SUMA PLN   16,98
+            Do zaplaty   16,98
+        """.trimIndent()
+        // what ML Kit gives for the photo turned 180°: rows in reverse order, cells right to left
+        val upsideDown = upright.lines().reversed().joinToString("\n") { it.split("   ").reversed().joinToString("   ") }
+        assertTrue(
+            "${ReceiptRows.orientationScore(upright)} vs ${ReceiptRows.orientationScore(upsideDown)}",
+            ReceiptRows.orientationScore(upright) >= 60 && ReceiptRows.orientationScore(upsideDown) < ReceiptRows.orientationScore(upright) - 50,
+        )
+    }
+
+    @Test
+    fun `two receipts combined into one expense`() {
+        val a = ScannedReceipt("PYZIK", 6318L, listOf(ScanItem("Mountain Dew", 670L), ScanItem("L&M", 5598L), ScanItem(ScannedReceipt.DEPOSIT_NAME, 50L)), ScanSource.RULES)
+        val b = ScannedReceipt("PYZIK", 2599L, listOf(ScanItem("Marlboro", 2599L)), ScanSource.GEMINI)
+        val both = ScannedReceipt.combine(listOf(a, b))
+        assertEquals("PYZIK", both.store)
+        assertEquals(8917L, both.totalGrosze)
+        assertEquals(4, both.items.size)
+        assertTrue(both.sumMatches)
+        assertEquals(ScanSource.GEMINI, both.source)
     }
 
     @Test

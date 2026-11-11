@@ -22,6 +22,7 @@ object ReceiptPrompt {
       - "kaucja_osobna": kaucja wypisana osobno pod sumą paragonu (sekcja „Opakowania zwrotne”, np. „Kaucja PET 6 * 0.5 3.0”). kwota dodatnia.
       - "rabat_ogolny": rabat na cały paragon, np. „Rabat Karta -5%”. kwota ujemna.
     - Niczego nie sumuj ani nie odejmuj sam. Pomiń samotną kwotę pod rabatem (to cena po rabacie, już wynikająca z poprzednich linii), a także stawki i sumy VAT, „Podsuma”, „Opusty łącznie”, numery kasy, daty, NIP, adres, płatność i stopki.
+    - Pomiń linie typu „Uwzgl. opust: -3,00 st. c 14,98” (Rossmann): cena w linii produktu nad nimi już zawiera ten rabat, a „st. c” to stara cena przed rabatem.
     - nazwa produktu: rozwiń sklepowe skróty i popraw oczywiste błędy OCR, zachowując sens oraz gramaturę lub objętość, np. „CHLEB RAZ. OBR. 0.5kg” → „Chleb razowy 0.5kg”. Przy kilku sztukach dopisz ich liczbę, np. „(3 szt.)”. Nie dopisuj marki ani wariantu, których nie ma w tekście.
     - Kwoty zapisuj jako liczby z kropką dziesiętną, np. 12.99.
     - Jeśli fragment paragonu jest nieczytelny, przepisz to, co da się odczytać. Nie wymyślaj pozycji ani kwot.

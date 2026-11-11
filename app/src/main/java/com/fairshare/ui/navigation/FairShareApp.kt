@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -38,6 +39,7 @@ import com.fairshare.ui.screens.GrupyScreen
 import com.fairshare.ui.screens.ProfilScreen
 import com.fairshare.ui.screens.PulpitScreen
 import com.fairshare.ui.screens.RozliczScreen
+import com.fairshare.scanner.ScannedReceipt
 import com.fairshare.ui.screens.SkanujParagonScreen
 import com.fairshare.ui.screens.StatystykiScreen
 import com.fairshare.ui.screens.summaryLine
@@ -104,7 +106,13 @@ fun FairShareApp() {
             if (showFab) {
                 // From a group screen the form opens with that group already selected
                 val groupId = if (route == Routes.GROUP) backStackEntry?.arguments?.getLong(GROUP_ID_ARG) else null
-                AddExpenseFab(onClick = { navController.navigate(addExpenseRoute(groupId)) })
+                AddExpenseFab(
+                    onClick = {
+                        // a new expense from scratch: receipts left over from a photo with several are dropped
+                        ReceiptQueue.clear()
+                        navController.navigate(addExpenseRoute(groupId))
+                    },
+                )
             }
         },
     ) { innerPadding ->
@@ -153,25 +161,46 @@ fun FairShareApp() {
                     results.remove<String>(ScanResultKeys.SUMMARY)
                     results.remove<Long>(ScanResultKeys.TOTAL)
                 }
+                // opened for the next receipt of a photo with several ("Osobno")
+                LaunchedEffect(form) {
+                    ReceiptQueue.takeHandedOver()?.let { (receipt, summary) ->
+                        receipt.totalGrosze?.let { form.applyScan(it, receipt.store, summary) }
+                    }
+                }
                 DodajWydatekScreen(
-                    onClose = back,
-                    onSave = back,
+                    onClose = {
+                        ReceiptQueue.clear()
+                        back()
+                    },
+                    onSave = {
+                        if (ReceiptQueue.handOverNext()) {
+                            // the next receipt from the same photo: a fresh form with it, in the same group
+                            navController.navigate(addExpenseRoute(form.selectedGroupId)) {
+                                popUpTo(Routes.ADD_EXPENSE) { inclusive = true }
+                            }
+                        } else {
+                            back()
+                        }
+                    },
                     onScanReceipt = { navController.navigate(Routes.SCAN) },
                     viewModel = form,
                 )
             }
             composable(Routes.SCAN) {
+                val returnToForm: (ScannedReceipt, String) -> Unit = { receipt, summary ->
+                    navController.previousBackStackEntry?.savedStateHandle?.putScan(receipt, summary)
+                    navController.popBackStack()
+                }
                 SkanujParagonScreen(
                     onBack = back,
                     onUse = { receipt ->
-                        val total = receipt.totalGrosze
-                        val form = navController.previousBackStackEntry?.savedStateHandle
-                        if (total != null && form != null) {
-                            form[ScanResultKeys.STORE] = receipt.store
-                            form[ScanResultKeys.SUMMARY] = receipt.summaryLine()
-                            form[ScanResultKeys.TOTAL] = total
-                        }
-                        navController.popBackStack()
+                        ReceiptQueue.clear()
+                        returnToForm(receipt, receipt.summaryLine())
+                    },
+                    onUseSeparately = { receipts ->
+                        val count = receipts.size
+                        ReceiptQueue.set(receipts.drop(1).mapIndexed { i, r -> r to "${r.summaryLine()} · paragon ${i + 2} z $count" })
+                        returnToForm(receipts.first(), "${receipts.first().summaryLine()} · paragon 1 z $count")
                     },
                 )
             }
@@ -179,6 +208,42 @@ fun FairShareApp() {
             composable(Routes.PROFILE) { ProfilScreen(onBack = back) }
         }
     }
+}
+
+/**
+ * Receipts from one photo waiting to become their own expenses ("Osobno"): after the form for one is saved, the
+ * next form opens with the next receipt.
+ */
+private object ReceiptQueue {
+    private val waiting = ArrayDeque<Pair<ScannedReceipt, String>>()
+    private var handedOver: Pair<ScannedReceipt, String>? = null
+
+    fun set(receipts: List<Pair<ScannedReceipt, String>>) {
+        clear()
+        waiting.addAll(receipts)
+    }
+
+    /** Moves the next waiting receipt to the form about to open; false when none is left. */
+    fun handOverNext(): Boolean {
+        handedOver = waiting.removeFirstOrNull()
+        return handedOver != null
+    }
+
+    /** The receipt for the form that just opened, once. */
+    fun takeHandedOver(): Pair<ScannedReceipt, String>? = handedOver.also { handedOver = null }
+
+    fun clear() {
+        waiting.clear()
+        handedOver = null
+    }
+}
+
+/** Hands a scanned receipt to the "Nowy wydatek" form of this back stack entry (read in its LaunchedEffect). */
+private fun SavedStateHandle.putScan(receipt: ScannedReceipt, summary: String) {
+    val total = receipt.totalGrosze ?: return
+    this[ScanResultKeys.STORE] = receipt.store
+    this[ScanResultKeys.SUMMARY] = summary
+    this[ScanResultKeys.TOTAL] = total
 }
 
 private fun addExpenseRoute(groupId: Long?): String =
