@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.fairshare.data.model.Money
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -19,6 +21,7 @@ import java.time.format.DateTimeFormatter
  * - `zdjecie.jpg`: the photo exactly as taken or picked from the gallery
  * - `ocr.txt`: the text ML Kit gave the rules (RuleBasedReceiptParser.parse(it) reproduces the rules' reading)
  * - `wynik.txt`: timings, what the rules and Gemini read, errors
+ * - `linie.json`: the OCR lines with their boxes in the upright photo (to check how receipts were told apart)
  *
  * Not shown in the gallery. scripts\zapisz-log.bat copies new scans to the PC (skany\). The newest [KEEP] are kept.
  */
@@ -35,7 +38,10 @@ class ScanArchive(context: Context) {
             resolver.openInputStream(photo)?.use { input ->
                 File(dir, "zdjecie.jpg").outputStream().use { input.copyTo(it) }
             }
-            if (outcome != null) File(dir, "ocr.txt").writeText(outcome.ocrText)
+            if (outcome != null) {
+                File(dir, "ocr.txt").writeText(outcome.ocrText)
+                File(dir, "linie.json").writeText(linesJson(outcome.lines))
+            }
             File(dir, "wynik.txt").writeText(describe(outcome, error))
             prune(base)
             Log.i(TAG, "Zapisano skan: skany/$id")
@@ -54,14 +60,35 @@ class ScanArchive(context: Context) {
         if (outcome == null) return@buildString
         appendLine("ML Kit: ${outcome.ocrMs} ms (z próbami obrotu ${outcome.ocrTotalMs} ms), obrót ${outcome.rotation}°, " +
             "pochylenie linii ${"%.1f".format(outcome.textAngle)}°")
-        appendLine("Reguły: ${outcome.rulesMs} ms")
-        outcome.aiModel?.let { appendLine("Gemini: $it, ${outcome.aiMs} ms") }
-        outcome.aiError?.let { appendLine("Gemini, błąd: $it") }
+        if (outcome.parts.size > 1) appendLine("Paragonów na zdjęciu: ${outcome.parts.size}")
+        if (outcome.multipleSuspected) appendLine("Uwaga: dwa nagłówki PARAGON FISKALNY, ale nie dało się rozdzielić paragonów")
         appendLine("Łącznie: ${outcome.totalMs} ms")
-        appendLine("Wynik pokazany na ekranie: ${outcome.receipt.source.label}")
-        appendReceipt("Reguły", outcome.byRules)
-        outcome.byAi?.let { appendReceipt("Gemini", it) }
+        outcome.parts.forEachIndexed { index, part ->
+            val label = if (outcome.parts.size > 1) " (paragon ${index + 1})" else ""
+            appendLine()
+            appendLine("#### Paragon ${index + 1}")
+            appendLine("Reguły: ${part.rulesMs} ms")
+            part.aiModel?.let { appendLine("Gemini: $it, ${part.aiMs} ms") }
+            part.aiError?.let { appendLine("Gemini, błąd po ${part.aiMs} ms: $it") }
+            appendLine("Wynik pokazany na ekranie: ${part.receipt.source.label}")
+            appendReceipt("Reguły$label", part.byRules)
+            part.byAi?.let { appendReceipt("Gemini$label", it) }
+            if (outcome.parts.size > 1) {
+                appendLine()
+                appendLine("Tekst tego paragonu:")
+                appendLine(part.ocrText)
+            }
+        }
     }
+
+    private fun linesJson(lines: List<OcrLine>): String = JSONArray().apply {
+        lines.forEach { line ->
+            put(
+                JSONObject().put("text", line.text).put("left", line.left.toDouble()).put("top", line.top.toDouble())
+                    .put("right", line.right.toDouble()).put("bottom", line.bottom.toDouble()),
+            )
+        }
+    }.toString(1)
 
     private fun StringBuilder.appendReceipt(title: String, receipt: ScannedReceipt) {
         appendLine()

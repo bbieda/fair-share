@@ -11,5 +11,14 @@ enum class ExpenseCategory(val label: String) {
 
     companion object {
         fun fromKey(key: String?): ExpenseCategory? = entries.firstOrNull { it.name == key }
+
+        /** Enum name when [label] matches a built-in category, otherwise the trimmed custom label. */
+        fun storedKey(label: String): String {
+            val clean = label.trim().replace(Regex("\\s+"), " ")
+            return entries.firstOrNull { it.label.equals(clean, ignoreCase = true) }?.name ?: clean
+        }
+
+        fun labelOf(key: String?): String =
+            fromKey(key)?.label ?: key?.takeIf { it.isNotBlank() } ?: "Bez kategorii"
     }
 }

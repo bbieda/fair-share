@@ -37,7 +37,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fairshare.data.db.CategoryTotal
 import com.fairshare.data.db.PersonBalance
-import com.fairshare.data.model.ExpenseCategory
 import com.fairshare.data.model.Money
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.BalanceAmount
@@ -47,9 +46,9 @@ import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ScreenHeader
 import com.fairshare.ui.components.SectionCard
 import com.fairshare.ui.components.avatarColorsFor
-import com.fairshare.ui.components.chartColor
+import com.fairshare.ui.components.categoryChartColor
+import com.fairshare.ui.components.categoryLabel
 import com.fairshare.ui.components.initialOf
-import com.fairshare.ui.components.labelOrDefault
 import com.fairshare.ui.components.monthTitle
 import com.fairshare.ui.sample.CategoryShare
 import com.fairshare.ui.theme.FairShareTheme
@@ -64,10 +63,11 @@ import kotlin.math.abs
 fun PulpitScreen(
     onOpenProfile: () -> Unit = {},
     onSettle: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
     viewModel: DashboardViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    PulpitContent(state, onOpenProfile, onSettle)
+    PulpitContent(state, onOpenProfile, onSettle, onOpenStats)
 }
 
 @Composable
@@ -75,6 +75,7 @@ private fun PulpitContent(
     state: DashboardUiState,
     onOpenProfile: () -> Unit = {},
     onSettle: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -86,7 +87,7 @@ private fun PulpitContent(
         Spacer(Modifier.height(12.dp))
         BalanceCard(state)
         Spacer(Modifier.height(12.dp))
-        MonthSummaryCard(state)
+        MonthSummaryCard(state, onOpenStats)
         Spacer(Modifier.height(16.dp))
 
         Row(
@@ -166,18 +167,18 @@ private fun MiniBalance(label: String, amount: String, color: Color, modifier: M
 }
 
 @Composable
-private fun MonthSummaryCard(state: DashboardUiState) {
+private fun MonthSummaryCard(state: DashboardUiState, onClick: () -> Unit) {
     val total = state.monthShare
     val categories = state.categories.filter { it.total > 0 }.map { item ->
-        val category = ExpenseCategory.fromKey(item.category)
+        // categoryLabel/categoryChartColor also handle the user's own categories
         CategoryShare(
-            name = category.labelOrDefault,
-            shortName = category.labelOrDefault,
+            name = categoryLabel(item.category),
+            shortName = categoryLabel(item.category),
             percent = if (total > 0) ((item.total * 100 + total / 2) / total).toInt() else 0,
-            color = category.chartColor,
+            color = categoryChartColor(item.category),
         )
     }
-    SectionCard(modifier = Modifier.fillMaxWidth(), onClick = {}) {
+    SectionCard(modifier = Modifier.fillMaxWidth(), onClick = onClick) {
         Column(
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),

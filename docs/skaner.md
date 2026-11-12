@@ -6,13 +6,22 @@ który etap to odczytał, a „Użyj w wydatku” wpisuje kwotę, sklep i katego
 ## Jak to działa
 
 1. **ML Kit** (Google, na telefonie, bez internetu) czyta tekst ze zdjęcia. Gdy zdjęcie jest obrócone, próbuje
-   innych orientacji. Linie wraca do wierszy paragonu (nazwa i cena w jednym wierszu).
+   innych orientacji. Linie składa w wiersze paragonu (nazwa i cena w jednym wierszu), z poprawką na pochylenie
+   zdjęcia: przy 1° cena na prawym brzegu jest pół wiersza niżej niż nazwa i trafiała do złego wiersza.
 2. **Reguły** (`scanner/rules/RuleBasedReceiptParser.kt`) wyciągają z tekstu sklep, pozycje (z rabatami, kaucjami,
    „ilość × cena”) i kwotę do zapłaty. Trwa to milisekundy.
 3. **Suma kontrolna:** jeśli pozycje sumują się do kwoty z paragonu, wynik jest od razu gotowy (zielony znaczek).
-4. Tylko gdy się nie sumują, zdjęcie idzie do **Gemini 3.5 Flash-Lite** (po 10 s albo przy błędzie 503:
-   Gemini 3.1 Flash-Lite). Ten sam prompt i schemat JSON co w benchmarku, jedna runda poprawki. Model tylko
-   przepisuje i oznacza linie, sumy liczy aplikacja.
+4. Tylko gdy się nie sumują, zdjęcie idzie do **Gemini 3.5 Flash-Lite**. Jeśli nie odpowie w 4 s (zwykle
+   odpowiada w 2,5 s), równolegle startuje **Gemini 3.1 Flash-Lite** i wygrywa ten, który odpowie pierwszy; przy
+   błędzie 503 następny model startuje od razu. Ten sam prompt i schemat JSON co w benchmarku, jedna runda
+   poprawki. Model tylko przepisuje i oznacza linie, sumy liczy aplikacja. Cały krok AI ma limit 25 s; potem
+   zostaje odczyt reguł i przycisk „Spróbuj ponownie”.
+5. **Kilka paragonów na jednym zdjęciu:** gdy ML Kit znajdzie 2+ nagłówki „PARAGON FISKALNY” oddzielone pustym
+   pasem (paragony obok siebie, jeden pod drugim, także 3 w kształcie litery L), każdy paragon jest czytany osobno,
+   z własną sumą kontrolną;
+   do Gemini idzie tylko wycinek zdjęcia z paragonem, który się nie zgadza. Ekran pyta: **jeden wydatek** (sumy
+   razem) albo **osobno** (po zapisaniu pierwszego wydatku od razu otwiera się formularz z następnym paragonem).
+   Gdy nagłówki są dwa, ale paragonów nie da się rozdzielić (stykają się), ekran ostrzega zamiast pokazać zieloną sumę.
 
 Skąd taki wybór: `WNIOSKI.md` z benchmarku (ocena 28.10.2026 na 44 nowych paragonach testowych). Ten układ
 odczytał 44/44 paragonów bez błędu (204/204 cen), AI było potrzebne dla 6 z 44, typowo 1,6 s, ok. 0,19 $ za
@@ -46,7 +55,8 @@ do reguł.
 
 Wersja debug (ta budowana skryptem i z Android Studio) zapisuje każdy skan na telefonie, żeby błędny odczyt dało
 się obejrzeć obok logu: `Android/data/com.fairshare/files/skany/<data_godzina>/` z plikami `zdjecie.jpg`,
-`ocr.txt` (tekst z ML Kit, który dostały reguły) i `wynik.txt` (czasy, odczyt reguł i Gemini, błędy). Zostaje 50
+`ocr.txt` (tekst z ML Kit, który dostały reguły), `wynik.txt` (czasy, odczyt reguł i Gemini, błędy) i
+`linie.json` (linie z ML Kit z ich położeniem na zdjęciu, do sprawdzania podziału na kilka paragonów). Zostaje 50
 ostatnich. Ekran wyniku pokazuje nazwę folderu. Galeria tych zdjęć nie widzi, ale przez kabel USB w trybie
 przesyłania plików są widoczne z komputera.
 
@@ -82,6 +92,7 @@ kontrolna i przeliczanie odpowiedzi modelu (rabaty, kaucje, rabat na cały parag
 | `scanner/ReceiptPrompt.kt` | prompt i prośba o poprawkę (identyczne z backendem) |
 | `scanner/ScannedReceipt.kt` | wynik w groszach, suma kontrolna, przeliczanie linii modelu |
 | `scanner/ScanArchive.kt` | wersja debug: zapis zdjęcia i odczytu każdego skanu |
+| `scanner/ReceiptSplitter.kt` | kilka paragonów na jednym zdjęciu: podział linii między paragony |
 | `ui/screens/SkanujParagonScreen.kt`, `ui/viewmodel/ScanViewModel.kt` | ekran skanera |
 
 ## Co dalej

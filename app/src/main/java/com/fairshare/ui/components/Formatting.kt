@@ -76,3 +76,30 @@ val ExpenseCategory?.chartColor: Color
     }
 
 val ExpenseCategory?.labelOrDefault: String get() = this?.label ?: "Bez kategorii"
+
+fun categoryLabel(key: String?): String = ExpenseCategory.labelOf(key)
+
+fun categoryIcon(key: String?): ImageVector = ExpenseCategory.fromKey(key).icon
+
+fun categoryChartColor(key: String?): Color {
+    val known = ExpenseCategory.fromKey(key)
+    if (key.isNullOrBlank() || known != null) return known.chartColor
+    val palette = listOf(ChartTeal, ChartBlue, ChartPink, ChartOrange, ChartPurple, ChartGray)
+    return palette[(key.hashCode() and 0x7FFFFFFF) % palette.size]
+}
+
+
+/** Same category always gets the same avatar colors; custom categories are picked by their name. */
+fun categoryAvatarColors(key: String?): AvatarColors {
+    val known = ExpenseCategory.fromKey(key)
+    val index = when {
+        key.isNullOrBlank() -> AvatarColors.entries.lastIndex
+        known != null -> known.ordinal
+        else -> key.hashCode() and 0x7FFFFFFF
+    }
+    return AvatarColors.entries[index % AvatarColors.entries.size]
+}
+
+/** "Dziś", "Wczoraj" or "12 paź 2026" for a timestamp in millis. */
+fun dayLabelOf(millis: Long, today: LocalDate = LocalDate.now()): String =
+    dayLabel(java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneId.systemDefault()).toLocalDate(), today)

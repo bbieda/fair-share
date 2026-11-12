@@ -1,13 +1,17 @@
 package com.fairshare.ui.viewmodel
 
+import android.app.Application
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.fairshare.data.AppSettings
 import com.fairshare.data.FairShareRepository
 import com.fairshare.data.db.ExpenseListRow
 import com.fairshare.data.db.GroupSummary
 import com.fairshare.data.db.MemberBalance
 import com.fairshare.data.db.UserEntity
+import com.fairshare.data.model.InviteCodes
+import com.fairshare.ui.notifyIfEnabled
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -15,7 +19,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /** "Grupy" tab: list of groups + creating a new one. */
-class GroupsViewModel(private val repository: FairShareRepository) : ViewModel() {
+class GroupsViewModel(
+    private val repository: FairShareRepository,
+    private val app: Application,
+    private val settings: AppSettings,
+) : ViewModel() {
 
     /** null until the first read from the database finishes. */
     val groups: StateFlow<List<GroupSummary>?> = repository.groupSummaries
@@ -23,13 +31,35 @@ class GroupsViewModel(private val repository: FairShareRepository) : ViewModel()
 
     fun createGroup(name: String, onCreated: (groupId: Long) -> Unit) {
         if (name.isBlank()) return
-        viewModelScope.launch { onCreated(repository.createGroup(name)) }
+        viewModelScope.launch {
+            val id = repository.createGroup(name)
+            app.notifyIfEnabled(settings, "Nowa grupa", name.trim())
+            onCreated(id)
+        }
+    }
+
+    fun openByInviteCode(raw: String, onOpened: (Long) -> Unit, onError: (String) -> Unit) {
+        val id = InviteCodes.parse(raw)
+        if (id == null) {
+            onError("Nie rozpoznaję kodu. Przykład: FS-A")
+            return
+        }
+        viewModelScope.launch {
+            val group = repository.findGroup(id)
+            if (group == null) {
+                onError("Na tym telefonie nie ma grupy o tym kodzie.")
+                return@launch
+            }
+            if (group.archived) repository.setArchived(id, false)
+            onOpened(id)
+        }
     }
 }
 
 data class GroupUiState(
     val loaded: Boolean = false,
     val name: String = "",
+    val archived: Boolean = false,
     val members: List<MemberBalance> = emptyList(),
     val expenses: List<ExpenseListRow> = emptyList(),
     /** People known from other groups who are not in this one yet. */
@@ -56,6 +86,7 @@ class GroupViewModel(
         GroupUiState(
             loaded = true,
             name = group?.name.orEmpty(),
+            archived = group?.archived == true,
             members = members,
             expenses = expenses,
             contacts = users.filter { !it.isMe && it.id !in memberIds },
@@ -73,5 +104,14 @@ class GroupViewModel(
 
     fun deleteExpense(expenseId: Long) {
         viewModelScope.launch { repository.deleteExpense(expenseId) }
+    }
+
+    fun rename(name: String) {
+        if (name.isBlank()) return
+        viewModelScope.launch { repository.renameGroup(groupId, name) }
+    }
+
+    fun setArchived(archived: Boolean) {
+        viewModelScope.launch { repository.setArchived(groupId, archived) }
     }
 }

@@ -1,5 +1,6 @@
 package com.fairshare.data.db
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -21,6 +22,9 @@ data class UserEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val isMe: Boolean = false,
+    val photoUri: String? = null,
+    val paymentDetails: String? = null,
+    val defaultCurrency: String = "PLN",
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -89,6 +93,8 @@ data class ExpenseEntity(
     val category: String?,
     /** Day of the expense as LocalDate.toEpochDay(). */
     val date: Long,
+    /** True for a recorded repayment. Settlements change balances and stay out of spending stats. */
+    val isSettlement: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -117,4 +123,20 @@ data class ExpenseShareEntity(
     val userId: Long,
     /** Share in grosze. */
     val amount: Long,
+)
+
+/** Activity logs table. */
+@Entity(
+    tableName = "activity_logs",
+    indices = [Index("timestamp"), Index("groupId")],
+)
+data class ActivityLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val groupId: Long? = null,
+    val actionType: String,
+    val description: String,
+    val seen: Boolean = false,
+    val timestamp: Long = System.currentTimeMillis(),
+    /** True when the phone owner paid or has a share in it (used by the "Dotyczy mnie" filter). */
+    @ColumnInfo(defaultValue = "1") val involvesMe: Boolean = true,
 )

@@ -40,6 +40,21 @@ data class ScannedReceipt(
         const val DEPOSIT_NAME = "Kaucja (opakowania zwrotne)"
 
         /**
+         * Several receipts from one photo as one expense: all items, totals added up. A receipt whose total was not
+         * found counts with the sum of its items.
+         */
+        fun combine(receipts: List<ScannedReceipt>): ScannedReceipt {
+            val stores = receipts.mapNotNull { it.store }.distinct()
+            return ScannedReceipt(
+                store = stores.joinToString(" + ").ifEmpty { null },
+                totalGrosze = receipts.sumOf { it.totalGrosze ?: it.itemsSumGrosze }.takeIf { it > 0 },
+                items = receipts.flatMap { it.items },
+                source = if (receipts.all { it.source == ScanSource.RULES }) ScanSource.RULES else ScanSource.GEMINI,
+                notes = receipts.flatMap { it.notes },
+            )
+        }
+
+        /**
          * Result of the rules → receipt. Deposits listed under the total become one item, like in the benchmark.
          * Unlike the benchmark's adapter, a receipt without a total line keeps `totalGrosze = null`, so it never
          * passes the checksum and goes to the AI (safer; in the evaluation ML Kit always found the total).

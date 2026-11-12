@@ -21,6 +21,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
@@ -35,6 +36,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -65,6 +67,7 @@ import com.fairshare.ui.components.labelOrDefault
 import com.fairshare.ui.components.plural
 import com.fairshare.ui.viewmodel.AddExpenseViewModel
 import com.fairshare.ui.viewmodel.AppViewModelProvider
+import com.fairshare.ui.viewmodel.SplitMode
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -153,14 +156,19 @@ fun DodajWydatekScreen(
                         field()
                     },
                 )
-                Text("PLN", fontSize = 20.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    Money.currencyCode,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.primary)
 
             TextField(
                 value = vm.description,
                 onValueChange = { vm.description = it },
-                label = { Text("Opis") },
+                label = { Text("Opis (np. Zakupy w Biedronce)") },
                 singleLine = true,
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 modifier = Modifier
@@ -192,12 +200,13 @@ fun DodajWydatekScreen(
             }
 
             // ---- Split ----
-            val share = vm.sharePreview
+            val equal = vm.equalShares
             ListRow(
                 Icons.Outlined.Percent,
                 when {
                     vm.participantIds.isEmpty() -> "Zaznacz osoby poniżej"
-                    share != null -> "Równo, po ${Money.format(share)}"
+                    vm.splitMode == SplitMode.CUSTOM -> "Własne kwoty"
+                    equal != null -> "Równo, największy udział ${Money.format(equal.values.max())}"
                     else -> "Równo, " + plural(vm.participantIds.size, "osoba", "osoby", "osób")
                 },
                 overline = "Podział",
@@ -208,11 +217,45 @@ fun DodajWydatekScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
                 ) {
+                    AppFilterChip("Równo", selected = vm.splitMode == SplitMode.EQUAL, onClick = { vm.setSplitMode(SplitMode.EQUAL) })
+                    AppFilterChip("Kwoty", selected = vm.splitMode == SplitMode.CUSTOM, onClick = { vm.setSplitMode(SplitMode.CUSTOM) })
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
+                ) {
                     vm.members.forEach { member ->
+                        val label = if (member.isMe) "Ty" else member.name
+                        val shareText = equal?.get(member.id)?.let { " · ${Money.format(it, withCurrency = false)}" }.orEmpty()
                         AppFilterChip(
-                            if (member.isMe) "Ty" else member.name,
+                            if (vm.splitMode == SplitMode.EQUAL && member.id in vm.participantIds) label + shareText else label,
                             selected = member.id in vm.participantIds,
                             onClick = { vm.toggleParticipant(member.id) },
+                        )
+                    }
+                }
+                if (vm.splitMode == SplitMode.CUSTOM) {
+                    vm.members.filter { it.id in vm.participantIds }.forEach { member ->
+                        OutlinedTextField(
+                            value = vm.customShares[member.id].orEmpty(),
+                            onValueChange = { vm.updateCustomShare(member.id, it) },
+                            label = { Text(if (member.isMe) "Ty" else member.name) },
+                            suffix = { Text(Money.currencyCode) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 40.dp, bottom = 8.dp),
+                        )
+                    }
+                    val sum = vm.customShareSum
+                    val total = Money.parse(vm.amount)
+                    if (sum != null && total != null && sum != total) {
+                        Text(
+                            "Suma udziałów ${Money.format(sum)} · wydatek ${Money.format(total)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
                         )
                     }
                 }
@@ -220,24 +263,63 @@ fun DodajWydatekScreen(
 
             // ---- Category ----
             Box {
+                val categoryLabel = if (vm.isCustomCategory) {
+                    if (vm.customCategory.isNotBlank()) vm.customCategory else "Własna kategoria"
+                } else {
+                    vm.category?.labelOrDefault ?: "Wybierz kategorię"
+                }
+                val categoryIcon = if (vm.isCustomCategory) Icons.AutoMirrored.Outlined.Label else (vm.category?.icon ?: Icons.AutoMirrored.Outlined.Label)
+
                 ListRow(
-                    vm.category?.icon ?: Icons.AutoMirrored.Outlined.Label,
-                    vm.category?.label ?: "Wybierz kategorię",
+                    categoryIcon,
+                    categoryLabel,
                     overline = "Kategoria",
                     onClick = { categoryMenuOpen = true },
                 )
                 DropdownMenu(expanded = categoryMenuOpen, onDismissRequest = { categoryMenuOpen = false }) {
-                    (ExpenseCategory.entries + listOf<ExpenseCategory?>(null)).forEach { category ->
+                    ExpenseCategory.entries.forEach { category ->
                         DropdownMenuItem(
                             text = { Text(category.labelOrDefault) },
                             leadingIcon = { Icon(category.icon, contentDescription = null) },
                             onClick = {
                                 vm.category = category
+                                vm.isCustomCategory = false
                                 categoryMenuOpen = false
                             },
                         )
                     }
+                    vm.savedCustomCategories.forEach { name ->
+                        DropdownMenuItem(
+                            text = { Text(name) },
+                            leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null) },
+                            onClick = {
+                                vm.category = null
+                                vm.isCustomCategory = true
+                                vm.customCategory = name
+                                categoryMenuOpen = false
+                            },
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text("Inna (wpisz własną)") },
+                        leadingIcon = { Icon(Icons.Outlined.Add, contentDescription = null) },
+                        onClick = {
+                            vm.category = null
+                            vm.isCustomCategory = true
+                            categoryMenuOpen = false
+                        }
+                    )
                 }
+            }
+
+            if (vm.isCustomCategory) {
+                OutlinedTextField(
+                    value = vm.customCategory,
+                    onValueChange = { vm.customCategory = it },
+                    label = { Text("Wpisz własną kategorię") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(start = 40.dp, top = 4.dp, bottom = 8.dp)
+                )
             }
 
             // ---- Date ----
@@ -247,6 +329,8 @@ fun DodajWydatekScreen(
                 overline = "Data",
                 onClick = { datePickerOpen = true },
             )
+
+            // ---- Receipt ----
             ListRow(
                 Icons.Outlined.PhotoCamera,
                 vm.scanSummary ?: "Zeskanuj paragon",
@@ -297,7 +381,6 @@ private fun ExpenseDatePicker(
     onDismiss: () -> Unit,
     onPicked: (LocalDate) -> Unit,
 ) {
-    // DatePicker works in UTC milliseconds
     val state = rememberDatePickerState(
         initialSelectedDateMillis = initial.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli(),
     )

@@ -43,28 +43,41 @@ class ReceiptOcr(private val context: Context) {
         val angle: Float,
         /** The photo as ML Kit saw it, upright, for the AI fallback. */
         val upright: Bitmap,
+        /** The OCR lines of [text] with their boxes in [upright], e.g. to tell two receipts in one photo apart. */
+        val lines: List<OcrLine>,
+        /** The small tilt of the text in [upright] (degrees, clockwise) the rows were levelled with. */
+        val tilt: Float,
     )
 
-    private class Reading(val rotation: Int, val lines: List<OcrLine>, val text: String, val ms: Long, val medianAngle: Float) {
-        /** How much this looks like a receipt read the right way up: lines with prices and receipt words. */
-        val score: Int = run {
-            val rows = text.lines()
-            rows.count { AMOUNT.containsMatchIn(it) } * 10 +
-                rows.count { KEYWORD.containsMatchIn(it.lowercase()) } * 25 +
-                text.count { it.isLetter() } / 20
-        }
-        val looksGood: Boolean get() = score >= 60 && abs(medianAngle) < 30
+    private class Reading(
+        val rotation: Int,
+        val lines: List<OcrLine>,
+        val text: String,
+        val ms: Long,
+        val medianAngle: Float,
+        val tilt: Float,
+    ) {
+        /** How much this looks like a receipt read the right way up (prices at the ends of rows, header above the total). */
+        val score: Int = ReceiptRows.orientationScore(text)
+
+        /**
+         * ML Kit reports the line angles in the photo's own frame, whatever rotation it was asked to read in (seen on
+         * the phone: a sideways receipt read at 270° still had lines at -89°). So the text is level in this reading when
+         * angle + rotation is about 0; the plain angle is also accepted in case a newer ML Kit reports it per reading.
+         */
+        val looksGood: Boolean
+            get() = score >= 60 && (abs(normalized(medianAngle + rotation)) < 30 || abs(normalized(medianAngle)) < 30)
     }
 
     suspend fun read(uri: Uri): Result = withContext(Dispatchers.Default) {
         val photo = loadUpright(uri)
         val started = SystemClock.elapsedRealtime()
         val readings = mutableListOf(recognize(photo, 0))
-        // Lines read at ~90° or ~180° mean the receipt lies sideways / upside down in the photo.
+        // Lines at about +90° (clockwise) mean the receipt lies turned clockwise: it has to be turned back 270° clockwise.
         val angle = readings[0].medianAngle
-        val guess = (((angle / 90f).roundToInt() * 90) % 360 + 360) % 360
+        val guess = ((-(angle / 90f).roundToInt() * 90) % 360 + 360) % 360
         if (!readings[0].looksGood) {
-            val order = listOf(guess, 360 - guess, 180, 90, 270).map { it % 360 }.filter { it != 0 }.distinct()
+            val order = listOf(guess, (guess + 180) % 360, 90, 270, 180).filter { it != 0 }.distinct()
             for (rotation in order) {
                 readings += recognize(photo, rotation)
                 if (readings.last().looksGood) break
@@ -78,6 +91,8 @@ class ReceiptOcr(private val context: Context) {
             totalMs = SystemClock.elapsedRealtime() - started,
             angle = best.medianAngle,
             upright = if (best.rotation == 0) photo else photo.rotated(best.rotation),
+            lines = best.lines,
+            tilt = best.tilt,
         )
     }
 
@@ -89,7 +104,8 @@ class ReceiptOcr(private val context: Context) {
         val lines = text.textBlocks.flatMap { it.lines }.mapNotNull { it.toOcrLine() }
         val angles = text.textBlocks.flatMap { it.lines }.filter { it.text.length >= 3 }.map { it.angle }.sorted()
         val median = if (angles.isEmpty()) 0f else angles[angles.size / 2]
-        return Reading(rotation, lines, ReceiptRows.rebuild(lines), ms, median)
+        val tilt = tiltIn(median, rotation)
+        return Reading(rotation, lines, ReceiptRows.rebuild(lines, tilt), ms, median, tilt)
     }
 
     fun close() = recognizer.close()
@@ -144,8 +160,16 @@ class ReceiptOcr(private val context: Context) {
     companion object {
         /** Phone photos are ~4000 px; ML Kit reads small receipt print better at full size. */
         const val MAX_SIDE = 4096
-        private val AMOUNT = Regex("""\d[.,]\d{2}""")
-        private val KEYWORD = Regex("""paragon|fiskaln|suma|razem|ptu|do zap|sprzeda""")
+
+        /** An angle as -180..180 degrees. */
+        private fun normalized(degrees: Float): Float = ((degrees % 360f) + 540f) % 360f - 180f
+
+        /**
+         * The small tilt left after turning the photo by [rotation] (ML Kit's angle is in the photo's frame, see
+         * [Reading.looksGood]); 0 when the reading is not level, as then the rows are wrong anyway.
+         */
+        private fun tiltIn(medianAngle: Float, rotation: Int): Float =
+            listOf(normalized(medianAngle + rotation), normalized(medianAngle)).firstOrNull { abs(it) <= 15f } ?: 0f
     }
 }
 

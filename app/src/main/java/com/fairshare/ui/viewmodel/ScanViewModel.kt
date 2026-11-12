@@ -67,8 +67,16 @@ class ScanViewModel(
         if (saved && uri != null) scan(uri)
     }
 
+    /** The photo of the last scan, for "Spróbuj ponownie" when the AI did not answer. */
+    private var lastPhoto: Uri? = null
+
+    fun retry() {
+        lastPhoto?.let(::scan)
+    }
+
     fun scan(uri: Uri) {
         if (state is State.Working) return
+        lastPhoto = uri
         state = State.Working("Wczytuję zdjęcie…")
         viewModelScope.launch {
             var outcome: ReceiptScanner.Outcome? = null
@@ -105,4 +113,4 @@ class ScanViewModel(
     private companion object {
         const val PENDING_PHOTO = "pending_photo"
     }
-}
+}

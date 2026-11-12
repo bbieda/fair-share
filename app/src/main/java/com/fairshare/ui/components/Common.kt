@@ -1,6 +1,8 @@
 package com.fairshare.ui.components
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -31,11 +33,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -44,6 +50,9 @@ import androidx.compose.ui.unit.sp
 import com.fairshare.ui.theme.AvatarColors
 import com.fairshare.ui.theme.Negative
 import com.fairshare.ui.theme.Positive
+
+/** The phone owner's profile photo, provided once at the top of the app. null = no photo. */
+val LocalProfilePhoto = compositionLocalOf<Bitmap?> { null }
 
 /** Screen title row with the profile button on the right. */
 @Composable
@@ -157,7 +166,19 @@ fun ProfileButton(onClick: () -> Unit = {}) {
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
     ) {
-        Icon(Icons.Outlined.Person, contentDescription = "Profil i ustawienia")
+        val photo = LocalProfilePhoto.current
+        if (photo != null) {
+            Image(
+                bitmap = photo.asImageBitmap(),
+                contentDescription = "Profil i ustawienia",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape),
+            )
+        } else {
+            Icon(Icons.Outlined.Person, contentDescription = "Profil i ustawienia")
+        }
     }
 }
 

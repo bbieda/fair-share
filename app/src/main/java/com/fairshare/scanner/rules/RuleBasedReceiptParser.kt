@@ -8,8 +8,8 @@ import kotlin.math.roundToLong
  * Reads a Polish receipt from OCR text (ML Kit / Tesseract) with plain rules – no language model.
  *
  * Same file as backend/src/main/kotlin/paragon/rules/RuleBasedReceiptParser.kt in the benchmark (only the package
- * differs): rules tuned on the dev receipts, frozen before the test run of 28.10.2026,
- * later only name cleanup (4.11). Change it in both places.
+ * differs): rules tuned on the dev receipts, frozen before the test run of 28.10.2026, later name cleanup (4.11)
+ * and fixes from receipts scanned on the phone (11.11). Change it in both places.
  *
  * Uses only the Kotlin standard library and java.text, so the same file can run in the Android app
  * next to ML Kit. The receipt's own checksums (items must add up to the total) are used to spot and
@@ -107,7 +107,14 @@ object RuleBasedReceiptParser {
         }
         for (line in itemLines) {
             val folded = line.fold()
-            if (ITEMS_END.containsMatchIn(folded)) break
+            if (ITEMS_END.containsMatchIn(folded) || ITEMS_END_SUMMARY.containsMatchIn(folded) ||
+                ITEMS_END_LOOSE.containsMatchIn(folded.replace(" ", ""))
+            ) break
+            // header lines (NIP, "30-444 Libertów") when the "PARAGON FISKALNY" line was not recognised
+            if (HEADER_LINE.containsMatchIn(folded)) continue
+            // Rossmann "Uwzgl. opust: -3,00 st. c 14,98": the price above already includes the discount
+            // pharmacy "Bez recepty 39,99": how the item above was paid for, not another item
+            if (INCLUDED_DISCOUNT.containsMatchIn(folded) || NOT_AN_ITEM.containsMatchIn(folded)) continue
             val amount = trailingAmount(line)?.takeUnless { a -> UNIT_PRICE_END.containsMatchIn(line.substring(0, a.start)) }
             val prefix = amount?.let { line.substring(0, it.start).trim() } ?: line
 
@@ -128,6 +135,24 @@ object RuleBasedReceiptParser {
             }
 
             if (amount == null) {
+                // quantity × unit price with the line total mangled or cut off by OCR: "1 x14,99 t4,.99#" under its
+                // name, "BELLA PERFECTA 1 x6,99 6," with it
+                val q = QTY.find(line)
+                if (q != null) {
+                    val before = line.substring(0, q.range.first).trim()
+                    val after = line.substring(q.range.last + 1).trim()
+                    val mangledTotal = after.length <= 10 && after.any { it.isDigit() } && !LETTER_WORD.containsMatchIn(after)
+                    val nameHere = LETTER_WORD.containsMatchIn(before.replace(QTY_UNITS, " "))
+                    if (mangledTotal && (nameHere || pendingName != null)) {
+                        val qty = q.groupValues[1].toNumber()
+                        val unit = q.groupValues[2].toGrosze()
+                        val name = if (nameHere) before else pendingName.orEmpty()
+                        drafts += Draft(name, (qty * unit).roundToLong(), qty, unit, nameOnOwnLine = !nameHere)
+                        pendingName = null
+                        expectNet = false
+                        continue
+                    }
+                }
                 // a name printed on its own line, the price comes on the next one
                 if (LETTER_WORD.containsMatchIn(line)) pendingName = line
                 continue
@@ -140,6 +165,8 @@ object RuleBasedReceiptParser {
                 // the price after the discount, sometimes with OCR junk in front of it
                 val maxPlausible = maxOf(last.gross, last.qtyTimesUnit ?: 0L)
                 if (amount.grosze in 0..maxPlausible) last.net = amount.grosze
+                // a skewed photo puts that price on the next item's name row (Biedronka: "Renif32cmBezLT A 18,74")
+                if (LETTER_WORD.containsMatchIn(prefix)) pendingName = prefix
                 expectNet = false
                 continue
             }
@@ -191,21 +218,31 @@ object RuleBasedReceiptParser {
 
     private fun readSeparateDeposits(lines: List<String>): Long {
         var inSection = false
+        var sectionFound = false
         var sectionSum: Long? = null
         var lineSum = 0L
+        // Carrefour: "Kaucja 0,50" on its own after "SUMA PLN", before "Do zapłaty"
+        var afterSum = false
+        var looseSum = 0L
         for (line in lines) {
             val folded = line.fold()
             if (DEPOSIT_SECTION.containsMatchIn(folded)) {
                 inSection = true
+                sectionFound = true
                 if (folded.contains("suma")) sectionSum = trailingAmount(line)?.grosze
                 continue
             }
-            if (!inSection) continue
+            if (!inSection) {
+                if (folded.startsWith("suma pln") || folded.startsWith("suma:")) afterSum = true
+                else if (afterSum && folded.startsWith("kaucj")) trailingAmount(line)?.let { if (it.grosze > 0) looseSum += it.grosze }
+                continue
+            }
             if (TOTAL_LINE.containsMatchIn(folded)) break
             if (Regex("""\bsuma\b""").containsMatchIn(folded)) { trailingAmount(line)?.let { sectionSum = it.grosze }; continue }
             trailingAmount(line)?.let { lineSum += it.grosze }
         }
-        return sectionSum ?: lineSum
+        // a section header with nothing under it (Carrefour prints it at the very end, for the next slip) does not count
+        return if (sectionFound && (sectionSum != null || lineSum > 0)) sectionSum ?: lineSum else looseSum
     }
 
     private data class TotalCandidate(val amount: Long, val strong: Boolean)
@@ -244,7 +281,10 @@ object RuleBasedReceiptParser {
     private fun detectStore(lines: List<String>): String? {
         fun find(text: String) = STORES.firstOrNull { (key, _) -> Regex("""\b$key""").containsMatchIn(text) }?.second
         val words = { ls: List<String> -> " " + ls.joinToString(" ") { it.fold().replace(Regex("[^a-z ]"), " ") } + " " }
-        return find(words(lines.take(12))) ?: find(words(lines)) ?: headerName(lines)
+        // OCR mixes up n/m and u/w ("Rossnann", "Libertouska"): compare with those letters folded on both sides
+        fun confusable(text: String) = text.replace('n', 'm').replace('u', 'w')
+        fun findLoose(text: String) = STORES.firstOrNull { (key, _) -> Regex("""\b${confusable(key)}""").containsMatchIn(confusable(text)) }?.second
+        return find(words(lines.take(12))) ?: find(words(lines)) ?: findLoose(words(lines.take(12))) ?: headerName(lines)
     }
 
     /**
@@ -299,6 +339,8 @@ object RuleBasedReceiptParser {
         // prices have exactly 2 decimals: a 3rd digit at the end is the VAT letter read as a digit ("5,490" = "5,49D")
         s = s.replace(Regex("""(\d[.,]\d{2})\d\s*$"""), "$1")
         if (TRAILING_AMOUNT.find(s) == null) s = s.replace(Regex("""(\d{1,4}) (\d{2})(\s*\p{L})?$"""), "$1,$2$3")
+        // "1szt x4,50 4 506": the same with the VAT letter read as a digit, only after a unit price
+        if (TRAILING_AMOUNT.find(s) == null && UNIT_PRICE.containsMatchIn(s)) s = s.replace(Regex("""(\d{1,4}) (\d{2})\d$"""), "$1,$2")
         return s
     }
 
@@ -358,17 +400,25 @@ object RuleBasedReceiptParser {
     private val SIZE_TIMES = Regex("""[xX×]""")
     private val ZERO_IN_WORD = Regex("""(?<=\p{L})0(?=\p{L})|(?<![\p{L}\d.,])0(?=\p{L}{3,})""")
     /** "PARAGON FISKALNY", also when OCR mangles it ("ooGON FISKALNY", "FISKALRY") – but not "NIEFISKALNY". */
-    private val FISCAL_HEADER = Regex("""paragon\s*fisk|(?<!nie)fiskal""")
+    private val FISCAL_HEADER = Regex("""paragon\s*f\s*[il1]\s*s\s*k|(?<!nie\s?)f\s?[il1]\s?s\s?k\s?a\s?l""")
     private val LETTER_WORD = Regex("""\p{L}{3,}""")
     /** Header lines that are not the shop's name. */
     private val NOT_A_NAME = Regex("""\bnip\b|\btel\b|\bul\.|\bal\.|\d{2}-\d{3}|adres|siedzib|\bbdo\b|nr rej|paragon|fiskal|\bkasa\b|\bwww\b|http|@""")
     private val DATE_LINE = Regex("""\d{4}-\d{2}-\d{2}""")
 
-    private val ITEMS_END = Regex("""^(sprzed|ptu\b|piu\b|kwota\b|kuota\b|podsuma|su[mn]a\b|razem\b|d[o0] zap)|opak\S*\s+\S*otne""")
+    /** "SPRLEDAE PODA TKWEA" = "SPRZEDAŻ OPODATKOWANA", checked with the spaces removed. */
+    private val ITEMS_END_LOOSE = Regex("""opodat|podatk""")
+    /** Biedronka: "OPUSTY ŁĄCZNIE -29,98" and "Sp: A=49,98 C=11,49" come right after the items. */
+    private val ITEMS_END_SUMMARY = Regex("""^opusty\b|\blacznie\b|^sp\s?:""")
+    private val HEADER_LINE = Regex("""\bnip\b|\b\d{2}-\d{3}\b""")
+    private val INCLUDED_DISCOUNT = Regex("""\bu[wu]?zgl""")
+    private val NOT_AN_ITEM = Regex("""^(bez recept|na recept|ryczal|refundac)""")
+    private val UNIT_PRICE = Regex("""[x×*]\s*\d{1,5}[.,]\d{2}""")
+    private val ITEMS_END = Regex("""^(sprzed|ptu\b|piu\b|kwota\b|kuota\b|podsuma|su[mn]a\b|razem\b|d[o0]\s+zap)|opak\S*\s+\S*otne""")
     private val DISCOUNT = Regex("""opust|rabat|upust|kupon|taniej|promocj|znizk""")
     private val DEPOSIT = Regex("""kaucj""")
     private val DEPOSIT_SECTION = Regex("""opak\S*\s+\S*otne""")
-    private val TOTAL_LINE = Regex("""^(su[mn]a\b|razem\b|d[o0] zap)|sprzeda\S*\s*:""")
+    private val TOTAL_LINE = Regex("""^(su[mn]a\b|razem\b|d[o0]\s+zap)|sprzeda\S*\s*:""")
     private val PAYMENT_LINE = Regex("""^(karta|platnosc|card|debit|kredyt|rozliczenie platnosci)\b""")
     /** Two line totals with their VAT letters at the end of one row: "... 1szt x4,20 4,20A 4,80C". */
     private val TWO_LINE_TOTALS = Regex("""(?<![xX×*\d.,])(\d{1,5}[.,]\d{2}[A-G0])\s+(\d{1,5}[.,]\d{2}\s*[A-G0])\s*$""")
