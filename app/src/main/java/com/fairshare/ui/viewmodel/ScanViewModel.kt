@@ -17,15 +17,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.io.File
 
-/** Keys under which the scan result goes back to the "Nowy wydatek" screen (its back stack entry's SavedStateHandle). */
-object ScanResultKeys {
-    /** Long, grosze. Set last: the form reacts to this one. */
-    const val TOTAL = "scan_total"
-    const val STORE = "scan_store"
-    /** Short line for the "Paragon" row, e.g. "Biedronka · 12 pozycji". */
-    const val SUMMARY = "scan_summary"
-}
-
 /** "Skanuj paragon": photo → ML Kit → rules → (Gemini when the sum does not match). */
 class ScanViewModel(
     application: Application,
@@ -113,4 +104,4 @@ class ScanViewModel(
     private companion object {
         const val PENDING_PHOTO = "pending_photo"
     }
-}
+}

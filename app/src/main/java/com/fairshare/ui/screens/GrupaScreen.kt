@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -38,6 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -52,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.fairshare.data.ExpenseDetails
 import com.fairshare.data.db.ExpenseListRow
 import com.fairshare.data.db.MemberBalance
 import com.fairshare.data.db.UserEntity
@@ -132,6 +135,7 @@ fun GrupaScreen(
         } else {
             ExpenseDetailsDialog(
                 expense = expense,
+                loadDetails = { viewModel.expenseDetails(expenseId) },
                 onDismiss = { expenseDetails = null },
                 onDelete = {
                     expenseDetails = null
@@ -390,7 +394,7 @@ private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
         expense.isSettlement -> "Spłata · ${Money.format(expense.amount)}"
         expense.payerIsMe -> "Płaciłeś · ${Money.format(expense.amount)}"
         else -> "Płacił(a) ${expense.payerName} · ${Money.format(expense.amount)}"
-    }
+    } + if (expense.itemCount > 0) " · ${expense.itemCount} poz." else ""
     val lentByMe = expense.amount - expense.myShare
 
     Row(
@@ -436,14 +440,28 @@ private fun ExpenseRow(expense: ExpenseListRow, onClick: () -> Unit) {
     }
 }
 
-/** Details of one expense with the option to delete it. */
+/**
+ * Details of one expense with the option to delete it: who owes how much and, for an expense split by receipt
+ * items, the items with the people who share each. [loadDetails] reads that part when the dialog opens.
+ */
 @Composable
-private fun ExpenseDetailsDialog(expense: ExpenseListRow, onDismiss: () -> Unit, onDelete: () -> Unit) {
+private fun ExpenseDetailsDialog(
+    expense: ExpenseListRow,
+    loadDetails: suspend () -> ExpenseDetails,
+    onDismiss: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val details by produceState<ExpenseDetails?>(null, expense.id) { value = loadDetails() }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(expense.description) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .heightIn(max = 440.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 DetailLine("Kwota", Money.format(expense.amount))
                 DetailLine("Data", dayLabel(LocalDate.ofEpochDay(expense.date)))
                 DetailLine("Płacił(a)", if (expense.payerIsMe) "Ty" else expense.payerName)
@@ -451,6 +469,33 @@ private fun ExpenseDetailsDialog(expense: ExpenseListRow, onDismiss: () -> Unit,
                     DetailLine("Kategoria", categoryLabel(expense.category))
                     DetailLine("Uczestnicy", plural(expense.participantCount, "osoba", "osoby", "osób"))
                     DetailLine("Twój udział", Money.format(expense.myShare))
+
+                    val shares = details?.shares.orEmpty()
+                    val items = details?.items.orEmpty()
+                    if (shares.isNotEmpty()) {
+                        DetailHeader(if (items.isEmpty()) "Podział" else "Podział po pozycjach")
+                        shares.forEach { share ->
+                            val name = if (share.isMe) "Ty" else share.name
+                            DetailLine(
+                                if (share.itemCount > 0) "$name · ${share.itemCount} poz." else name,
+                                Money.format(share.amount),
+                            )
+                        }
+                    }
+                    if (items.isNotEmpty()) {
+                        DetailHeader("Pozycje (${items.size})")
+                        items.forEach { item ->
+                            Column {
+                                DetailLine(item.name, Money.format(item.price))
+                                Text(
+                                    item.sharedBy.orEmpty() +
+                                        if (item.myAmount != 0L && item.sharerCount > 1) " · twoja część ${Money.format(item.myAmount)}" else "",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -458,6 +503,16 @@ private fun ExpenseDetailsDialog(expense: ExpenseListRow, onDismiss: () -> Unit,
         dismissButton = {
             TextButton(onClick = onDelete) { Text("Usuń", color = MaterialTheme.colorScheme.error) }
         },
+    )
+}
+
+@Composable
+private fun DetailHeader(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 10.dp),
     )
 }
 

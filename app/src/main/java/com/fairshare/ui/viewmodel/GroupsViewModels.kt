@@ -5,6 +5,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.fairshare.data.AppSettings
+import com.fairshare.data.ExpenseDetails
 import com.fairshare.data.FairShareRepository
 import com.fairshare.data.db.ExpenseListRow
 import com.fairshare.data.db.GroupSummary
@@ -105,6 +106,9 @@ class GroupViewModel(
     fun deleteExpense(expenseId: Long) {
         viewModelScope.launch { repository.deleteExpense(expenseId) }
     }
+
+    /** Who owes what of one expense and its receipt items, for the details dialog. */
+    suspend fun expenseDetails(expenseId: Long): ExpenseDetails = repository.expenseDetails(expenseId)
 
     fun rename(name: String) {
         if (name.isBlank()) return

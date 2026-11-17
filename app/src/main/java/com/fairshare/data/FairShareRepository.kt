@@ -6,8 +6,12 @@ import com.fairshare.data.db.ActivityLogEntity
 import com.fairshare.data.db.CategoryTotal
 import com.fairshare.data.db.DayTotal
 import com.fairshare.data.db.ExpenseEntity
+import com.fairshare.data.db.ExpenseItemEntity
+import com.fairshare.data.db.ExpenseItemRow
+import com.fairshare.data.db.ExpenseItemShareEntity
 import com.fairshare.data.db.ExpenseListRow
 import com.fairshare.data.db.ExpenseShareEntity
+import com.fairshare.data.db.ExpenseShareRow
 import com.fairshare.data.db.FairShareDatabase
 import com.fairshare.data.db.GroupEntity
 import com.fairshare.data.db.GroupMemberEntity
@@ -29,6 +33,19 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.abs
+
+/**
+ * One receipt item of an expense split by items: [shares] says who pays how much of it (user id -> grosze),
+ * and sums to [price]. See [com.fairshare.data.model.ItemSplit].
+ */
+data class ExpenseItemInput(val name: String, val price: Long, val shares: Map<Long, Long>)
+
+/** Everything the details dialog shows about one expense beyond its list row. */
+data class ExpenseDetails(
+    val shares: List<ExpenseShareRow>,
+    /** Empty unless the expense was split by receipt items. */
+    val items: List<ExpenseItemRow>,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FairShareRepository(private val db: FairShareDatabase) {
@@ -166,6 +183,7 @@ class FairShareRepository(private val db: FairShareDatabase) {
     /**
      * [shares] maps participant id to grosze. The values must be positive and sum to [amount].
      * [category] is an [ExpenseCategory] name or a custom label.
+     * [items]: the receipt items when the expense is split by items; their shares must add up to [shares].
      */
     suspend fun addExpense(
         groupId: Long,
@@ -176,11 +194,19 @@ class FairShareRepository(private val db: FairShareDatabase) {
         date: LocalDate,
         shares: Map<Long, Long>,
         isSettlement: Boolean = false,
+        items: List<ExpenseItemInput> = emptyList(),
     ): Long {
         require(amount > 0) { "Kwota musi być większa od zera" }
         require(shares.isNotEmpty()) { "Wybierz przynajmniej jedną osobę do podziału" }
         require(shares.values.all { it > 0 }) { "Udział każdej osoby musi być większy od zera" }
         require(shares.values.sum() == amount) { "Udziały muszą sumować się do kwoty wydatku" }
+        if (items.isNotEmpty()) {
+            require(items.all { it.shares.isNotEmpty() }) { "Każda pozycja musi mieć przypisaną osobę" }
+            require(items.all { it.shares.values.sum() == it.price }) { "Udziały w pozycji muszą sumować się do jej ceny" }
+            val perUser = mutableMapOf<Long, Long>()
+            items.forEach { item -> item.shares.forEach { (userId, part) -> perUser[userId] = (perUser[userId] ?: 0L) + part } }
+            require(perUser.filterValues { it != 0L } == shares) { "Pozycje muszą sumować się do udziałów osób" }
+        }
 
         return db.withTransaction {
             val members = groups.getMemberIds(groupId).toSet()
@@ -207,6 +233,14 @@ class FairShareRepository(private val db: FairShareDatabase) {
                     ExpenseShareEntity(expenseId = expenseId, userId = userId, amount = share)
                 }
             )
+            items.forEachIndexed { position, item ->
+                val itemId = expenses.insertItem(
+                    ExpenseItemEntity(expenseId = expenseId, name = item.name.trim().ifEmpty { "Pozycja" }, price = item.price, position = position)
+                )
+                expenses.insertItemShares(
+                    item.shares.map { (userId, part) -> ExpenseItemShareEntity(itemId = itemId, userId = userId, amount = part) }
+                )
+            }
             val action = if (isSettlement) "SETTLEMENT" else "ADD_EXPENSE"
             val payerName = users.getById(payerId)?.name ?: "Ktoś"
             val text = if (isSettlement) {
@@ -249,6 +283,13 @@ class FairShareRepository(private val db: FairShareDatabase) {
             )
         }
     }
+
+    /** Who owes what of one expense and, when it was split by items, its receipt items. */
+    suspend fun expenseDetails(expenseId: Long): ExpenseDetails =
+        ExpenseDetails(
+            shares = expenses.getShareRows(expenseId),
+            items = expenses.getItemRows(expenseId, requireMeId()),
+        )
 
     suspend fun deleteExpense(expenseId: Long) {
         val expense = expenses.getExpense(expenseId) ?: return

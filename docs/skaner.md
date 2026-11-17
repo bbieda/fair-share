@@ -97,8 +97,7 @@ kontrolna i przeliczanie odpowiedzi modelu (rabaty, kaucje, rabat na cały parag
 
 ## Co dalej
 
-- **Podział po pozycjach:** skaner zwraca listę pozycji, ale wydatek nadal dzieli się równo, bo tak działa
-  model danych (`expense_shares`). Następny krok: przypisywanie pozycji do osób.
+- Podział po pozycjach jest zrobiony: opis w `docs/pozycje.md`.
 - Wywołanie Gemini przez backend zamiast klucza w APK.
 - Zmierzyć czas ML Kit na prawdziwych telefonach (w benchmarku był emulator).
 - Ewentualnie przycinanie zdjęcia do paragonu (ML Kit Document Scanner) przed odczytem.

@@ -125,6 +125,62 @@ data class ExpenseShareEntity(
     val amount: Long,
 )
 
+/**
+ * One line of the receipt of an expense split by items ("kto co brał"). An expense split equally or by typed amounts
+ * has no rows here. The prices of an expense's items always sum to its amount.
+ */
+@Entity(
+    tableName = "expense_items",
+    foreignKeys = [
+        ForeignKey(
+            entity = ExpenseEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["expenseId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("expenseId")],
+)
+data class ExpenseItemEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val expenseId: Long,
+    val name: String,
+    /** Price in grosze, after discounts. Negative for a discount line. */
+    val price: Long,
+    /** Order on the receipt, from 0. */
+    val position: Int,
+)
+
+/**
+ * How much of one item one person pays. The rows of one item sum to its price, and all rows of one person in an
+ * expense sum to that person's row in expense_shares.
+ */
+@Entity(
+    tableName = "expense_item_shares",
+    primaryKeys = ["itemId", "userId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = ExpenseItemEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["itemId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = UserEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["userId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("userId")],
+)
+data class ExpenseItemShareEntity(
+    val itemId: Long,
+    val userId: Long,
+    /** Share of the item in grosze. */
+    val amount: Long,
+)
+
 /** Activity logs table. */
 @Entity(
     tableName = "activity_logs",

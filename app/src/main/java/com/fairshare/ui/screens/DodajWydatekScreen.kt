@@ -27,12 +27,14 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Receipt
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -60,9 +62,12 @@ import com.fairshare.data.model.ExpenseCategory
 import com.fairshare.data.model.Money
 import com.fairshare.ui.components.AppFilterChip
 import com.fairshare.ui.components.BackHeader
+import com.fairshare.ui.components.LetterAvatar
 import com.fairshare.ui.components.ListRow
+import com.fairshare.ui.components.avatarColorsFor
 import com.fairshare.ui.components.dayLabel
 import com.fairshare.ui.components.icon
+import com.fairshare.ui.components.initialOf
 import com.fairshare.ui.components.labelOrDefault
 import com.fairshare.ui.components.plural
 import com.fairshare.ui.viewmodel.AddExpenseViewModel
@@ -78,6 +83,8 @@ fun DodajWydatekScreen(
     onClose: () -> Unit = {},
     onSave: () -> Unit = {},
     onScanReceipt: () -> Unit = {},
+    /** Opens "Podziel pozycje": who took which receipt item. */
+    onSplitItems: () -> Unit = {},
     viewModel: AddExpenseViewModel = viewModel(factory = AppViewModelProvider.Factory),
 ) {
     val vm = viewModel
@@ -133,7 +140,9 @@ fun DodajWydatekScreen(
             }
 
             // ---- Amount ----
-            FieldLabel("Kwota", Modifier.padding(top = 16.dp))
+            // split by items: the amount is the sum of the items, changed in "Podziel pozycje"
+            val byItems = vm.splitMode == SplitMode.ITEMS
+            FieldLabel(if (byItems) "Kwota (suma pozycji)" else "Kwota", Modifier.padding(top = 16.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val amountStyle = TextStyle(
                     fontSize = 48.sp,
@@ -145,6 +154,7 @@ fun DodajWydatekScreen(
                     value = vm.amount,
                     onValueChange = vm::updateAmount,
                     textStyle = amountStyle,
+                    readOnly = byItems,
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -204,6 +214,8 @@ fun DodajWydatekScreen(
             ListRow(
                 Icons.Outlined.Percent,
                 when {
+                    byItems && vm.items.isEmpty() -> "Po pozycjach z paragonu"
+                    byItems -> "Po pozycjach, " + plural(vm.items.size, "pozycja", "pozycje", "pozycji")
                     vm.participantIds.isEmpty() -> "Zaznacz osoby poniżej"
                     vm.splitMode == SplitMode.CUSTOM -> "Własne kwoty"
                     equal != null -> "Równo, największy udział ${Money.format(equal.values.max())}"
@@ -219,7 +231,12 @@ fun DodajWydatekScreen(
                 ) {
                     AppFilterChip("Równo", selected = vm.splitMode == SplitMode.EQUAL, onClick = { vm.setSplitMode(SplitMode.EQUAL) })
                     AppFilterChip("Kwoty", selected = vm.splitMode == SplitMode.CUSTOM, onClick = { vm.setSplitMode(SplitMode.CUSTOM) })
+                    AppFilterChip("Pozycje", selected = byItems, onClick = { vm.setSplitMode(SplitMode.ITEMS) })
                 }
+            }
+            if (vm.members.isNotEmpty() && byItems) {
+                ItemsSplitSummary(vm, onSplitItems)
+            } else if (vm.members.isNotEmpty()) {
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
@@ -399,6 +416,68 @@ private fun ExpenseDatePicker(
         },
     ) {
         DatePicker(state = state)
+    }
+}
+
+/**
+ * Split by items, inside the form: what each person's items add up to, what still needs attention, and the way to
+ * "Podziel pozycje".
+ */
+@Composable
+private fun ItemsSplitSummary(vm: AddExpenseViewModel, onSplitItems: () -> Unit) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(start = 40.dp, bottom = 8.dp),
+    ) {
+        if (vm.items.isEmpty()) {
+            Text(
+                "Zeskanuj paragon (wiersz „Paragon” niżej) albo dodaj pozycje ręcznie.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            val perUser = vm.itemSplit.perUser
+            vm.members.forEach { member ->
+                val count = vm.items.count { member.id in it.sharedBy }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LetterAvatar(initialOf(member.name), avatarColorsFor(member.id), size = 28.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(if (member.isMe) "Ty" else member.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+                        Text(
+                            if (count == 0) "bez pozycji" else plural(count, "pozycja", "pozycje", "pozycji"),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text(
+                        Money.format(perUser[member.id] ?: 0L),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (count == 0) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+            if (vm.unassignedItems > 0) {
+                Text(
+                    "Pozycje bez przypisanej osoby: ${vm.unassignedItems}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            vm.itemsGap?.let { gap ->
+                Text(
+                    "Pozycje dają ${Money.format(vm.itemsSum)}, a paragon ${Money.format(vm.itemsSum + gap)}. " +
+                        "Popraw pozycje w „Podziel pozycje”.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+        FilledTonalButton(onClick = onSplitItems) {
+            Icon(Icons.Outlined.Receipt, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(if (vm.items.isEmpty()) "Dodaj pozycje" else "Podziel pozycje")
+        }
     }
 }
 

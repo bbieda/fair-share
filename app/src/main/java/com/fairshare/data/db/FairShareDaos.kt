@@ -108,6 +108,45 @@ interface ExpenseDao {
     @Insert
     suspend fun insertShares(shares: List<ExpenseShareEntity>)
 
+    @Insert
+    suspend fun insertItem(item: ExpenseItemEntity): Long
+
+    @Insert
+    suspend fun insertItemShares(shares: List<ExpenseItemShareEntity>)
+
+    /** Who owes how much of one expense, the phone owner first. */
+    @Query(
+        """
+        SELECT u.id AS userId, u.name AS name, u.isMe AS isMe, s.amount AS amount,
+            (SELECT COUNT(*) FROM expense_item_shares x
+                INNER JOIN expense_items i ON i.id = x.itemId
+                WHERE i.expenseId = s.expenseId AND x.userId = u.id) AS itemCount
+        FROM expense_shares s
+        INNER JOIN users u ON u.id = s.userId
+        WHERE s.expenseId = :expenseId
+        ORDER BY u.isMe DESC, u.name COLLATE NOCASE
+        """
+    )
+    suspend fun getShareRows(expenseId: Long): List<ExpenseShareRow>
+
+    /** Receipt items of one expense in receipt order, with who shares each. */
+    @Query(
+        """
+        SELECT i.id AS id, i.name AS name, i.price AS price,
+            (SELECT GROUP_CONCAT(CASE WHEN u.isMe = 1 THEN 'Ty' ELSE u.name END, ', ')
+                FROM expense_item_shares x
+                INNER JOIN users u ON u.id = x.userId
+                WHERE x.itemId = i.id) AS sharedBy,
+            (SELECT COUNT(*) FROM expense_item_shares x WHERE x.itemId = i.id) AS sharerCount,
+            COALESCE((SELECT x.amount FROM expense_item_shares x
+                WHERE x.itemId = i.id AND x.userId = :meId), 0) AS myAmount
+        FROM expense_items i
+        WHERE i.expenseId = :expenseId
+        ORDER BY i.position, i.id
+        """
+    )
+    suspend fun getItemRows(expenseId: Long, meId: Long): List<ExpenseItemRow>
+
     @Query("SELECT * FROM expenses WHERE id = :expenseId")
     suspend fun getExpense(expenseId: Long): ExpenseEntity?
 
@@ -138,7 +177,8 @@ interface ExpenseDao {
             COALESCE((SELECT s.amount FROM expense_shares s
                 WHERE s.expenseId = e.id AND s.userId = :meId), 0) AS myShare,
             (SELECT COUNT(*) FROM expense_shares s WHERE s.expenseId = e.id) AS participantCount,
-            e.isSettlement AS isSettlement
+            e.isSettlement AS isSettlement,
+            (SELECT COUNT(*) FROM expense_items i WHERE i.expenseId = e.id) AS itemCount
         FROM expenses e
         INNER JOIN users u ON u.id = e.payerId
         WHERE e.groupId = :groupId
