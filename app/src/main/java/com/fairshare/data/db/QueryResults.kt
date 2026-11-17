@@ -40,6 +40,31 @@ data class ExpenseListRow(
     val myShare: Long,
     val participantCount: Int,
     val isSettlement: Boolean = false,
+    /** Receipt items stored with the expense; 0 unless it was split by items. */
+    val itemCount: Int = 0,
+)
+
+/** One participant's part of an expense, for the details dialog. */
+data class ExpenseShareRow(
+    val userId: Long,
+    val name: String,
+    val isMe: Boolean,
+    /** What this person owes of the expense, in grosze. */
+    val amount: Long,
+    /** How many receipt items this person shares (0 when the expense was not split by items). */
+    val itemCount: Int,
+)
+
+/** One receipt item of an expense split by items, for the details dialog. */
+data class ExpenseItemRow(
+    val id: Long,
+    val name: String,
+    val price: Long,
+    /** "Ty, Ania" (null when nobody, which saving does not allow). */
+    val sharedBy: String?,
+    val sharerCount: Int,
+    /** The phone owner's part of this item (0 when they do not share it). */
+    val myAmount: Long,
 )
 
 /** Net between the phone owner and one person inside one group. > 0: they owe me. */
