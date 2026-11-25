@@ -1,13 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Only for the AI step of the receipt scanner (Gemini). ML Kit works offline. -->
+    <!-- Sync with the FairShare server, and the AI step of the receipt scanner (Gemini). ML Kit works offline. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- To send changes saved offline as soon as the network is back -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- allowBackup=false: the login token and the local copy must not end up in a cloud or adb backup;
+         the data is on the server anyway and comes back after logging in. -->
     <application
         android:name=".FairShareApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.FairShare">

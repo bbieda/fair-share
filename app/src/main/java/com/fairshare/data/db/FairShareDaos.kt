@@ -21,10 +21,27 @@ interface UserDao {
     @Query("SELECT * FROM users WHERE isMe = 1 LIMIT 1")
     fun observeMe(): Flow<UserEntity?>
 
-    @Query("SELECT * FROM users ORDER BY isMe DESC, name COLLATE NOCASE")
+    /**
+     * People in at least one of my groups. Someone added by name who later joined with an account stays on the
+     * phone without a group; they are left out, so nobody adds that stale entry again.
+     */
+    @Query(
+        """
+        SELECT * FROM users u
+        WHERE u.isMe = 1 OR EXISTS (SELECT 1 FROM group_members m WHERE m.userId = u.id)
+        ORDER BY u.isMe DESC, u.name COLLATE NOCASE
+        """
+    )
     fun observeAll(): Flow<List<UserEntity>>
 
-    @Query("SELECT * FROM users WHERE isMe = 0 AND name = :name COLLATE NOCASE LIMIT 1")
+    @Query(
+        """
+        SELECT * FROM users u
+        WHERE u.isMe = 0 AND u.name = :name COLLATE NOCASE
+          AND EXISTS (SELECT 1 FROM group_members m WHERE m.userId = u.id)
+        LIMIT 1
+        """
+    )
     suspend fun findOtherByName(name: String): UserEntity?
 
     @Query("SELECT * FROM users WHERE id = :id")
@@ -32,6 +49,12 @@ interface UserDao {
 
     @Query("UPDATE users SET paymentDetails = :details WHERE id = :userId")
     suspend fun setPaymentDetails(userId: Long, details: String?)
+
+    @Query("SELECT * FROM users WHERE uid = :uid")
+    suspend fun getByUid(uid: String): UserEntity?
+
+    @Query("SELECT * FROM users WHERE id IN (:ids)")
+    suspend fun getByIds(ids: Collection<Long>): List<UserEntity>
 }
 
 @Dao
@@ -82,6 +105,21 @@ interface GroupDao {
 
     @Query("SELECT userId FROM group_members WHERE groupId = :groupId")
     suspend fun getMemberIds(groupId: Long): List<Long>
+
+    @Query("SELECT * FROM friend_groups WHERE uid = :uid")
+    suspend fun getByUid(uid: String): GroupEntity?
+
+    @Query("DELETE FROM group_members WHERE groupId = :groupId AND userId = :userId")
+    suspend fun deleteMember(groupId: Long, userId: Long)
+
+    @Query("SELECT * FROM friend_groups")
+    suspend fun getAll(): List<GroupEntity>
+
+    @Query("SELECT * FROM group_members")
+    suspend fun getAllMembers(): List<GroupMemberEntity>
+
+    @Query("DELETE FROM friend_groups WHERE id = :groupId")
+    suspend fun deleteGroup(groupId: Long)
 
     @Query(
         """
@@ -149,6 +187,21 @@ interface ExpenseDao {
 
     @Query("SELECT * FROM expenses WHERE id = :expenseId")
     suspend fun getExpense(expenseId: Long): ExpenseEntity?
+
+    @Query("SELECT * FROM expenses WHERE uid = :uid")
+    suspend fun getByUid(uid: String): ExpenseEntity?
+
+    @Update
+    suspend fun updateExpense(expense: ExpenseEntity)
+
+    @Query("DELETE FROM expense_shares WHERE expenseId = :expenseId")
+    suspend fun deleteShares(expenseId: Long)
+
+    @Query("DELETE FROM expense_items WHERE expenseId = :expenseId")
+    suspend fun deleteItems(expenseId: Long)
+
+    @Query("SELECT id, uid FROM expenses")
+    suspend fun getAllIds(): List<IdUid>
 
     @Query("DELETE FROM expenses WHERE id = :expenseId")
     suspend fun deleteExpense(expenseId: Long)
@@ -265,7 +318,7 @@ interface ExpenseDao {
     @Query(
         """
         SELECT u.id AS userId, u.name AS name, g.id AS groupId, g.name AS groupName,
-            u.paymentDetails AS paymentDetails,
+            u.paymentDetails AS paymentDetails, u.hasAccount AS hasAccount,
             COALESCE((SELECT SUM(s.amount) FROM expense_shares s
                 INNER JOIN expenses e ON e.id = s.expenseId
                 WHERE e.groupId = g.id AND e.payerId = :meId AND s.userId = u.id), 0)
@@ -331,4 +384,26 @@ interface ActivityLogDao {
 
     @Query("DELETE FROM activity_logs")
     suspend fun deleteAll()
+
+    @Query("SELECT COUNT(*) FROM activity_logs WHERE uid = :uid")
+    suspend fun countByUid(uid: String): Int
+}
+
+/** The offline queue: changes waiting to be sent to the server. */
+@Dao
+interface PendingOpDao {
+    @Insert
+    suspend fun insert(op: PendingOpEntity): Long
+
+    @Query("SELECT * FROM pending_ops ORDER BY id LIMIT :limit")
+    suspend fun first(limit: Int): List<PendingOpEntity>
+
+    @Query("DELETE FROM pending_ops WHERE id IN (:ids)")
+    suspend fun delete(ids: List<Long>)
+
+    @Query("SELECT COUNT(*) FROM pending_ops")
+    suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM pending_ops")
+    fun observeCount(): Flow<Int>
 }

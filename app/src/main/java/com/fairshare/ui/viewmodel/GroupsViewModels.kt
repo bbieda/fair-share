@@ -12,6 +12,8 @@ import com.fairshare.data.db.GroupSummary
 import com.fairshare.data.db.MemberBalance
 import com.fairshare.data.db.UserEntity
 import com.fairshare.data.model.InviteCodes
+import com.fairshare.data.sync.JoinPreview
+import com.fairshare.data.sync.SyncManager
 import com.fairshare.ui.notifyIfEnabled
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -24,6 +26,7 @@ class GroupsViewModel(
     private val repository: FairShareRepository,
     private val app: Application,
     private val settings: AppSettings,
+    private val sync: SyncManager,
 ) : ViewModel() {
 
     /** null until the first read from the database finishes. */
@@ -39,20 +42,32 @@ class GroupsViewModel(
         }
     }
 
-    fun openByInviteCode(raw: String, onOpened: (Long) -> Unit, onError: (String) -> Unit) {
-        val id = InviteCodes.parse(raw)
-        if (id == null) {
-            onError("Nie rozpoznaję kodu. Przykład: FS-A")
+    /** Asks the server which group a code belongs to and who in it has no account yet. Needs the internet. */
+    fun previewJoin(raw: String, onPreview: (code: String, JoinPreview) -> Unit, onError: (String) -> Unit) {
+        val code = InviteCodes.normalize(raw)
+        if (code == null) {
+            onError("Kod ma 8 znaków, np. K7MQ-2XPA")
             return
         }
         viewModelScope.launch {
-            val group = repository.findGroup(id)
-            if (group == null) {
-                onError("Na tym telefonie nie ma grupy o tym kodzie.")
-                return@launch
+            try {
+                onPreview(code, sync.joinPreview(code))
+            } catch (e: Exception) {
+                onError(e.toUserMessage())
             }
-            if (group.archived) repository.setArchived(id, false)
-            onOpened(id)
+        }
+    }
+
+    /** Joins (as the person [claimPersonUid] added by name, when given), downloads the group and opens it. */
+    fun join(code: String, claimPersonUid: String?, onJoined: (Long) -> Unit, onError: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val groupId = sync.join(code, claimPersonUid)
+                repository.findGroup(groupId)?.takeIf { it.archived }?.let { repository.setArchived(groupId, false) }
+                onJoined(groupId)
+            } catch (e: Exception) {
+                onError(e.toUserMessage())
+            }
         }
     }
 }
@@ -61,6 +76,8 @@ data class GroupUiState(
     val loaded: Boolean = false,
     val name: String = "",
     val archived: Boolean = false,
+    /** null until the group has been sent to the server once. */
+    val inviteCode: String? = null,
     val members: List<MemberBalance> = emptyList(),
     val expenses: List<ExpenseListRow> = emptyList(),
     /** People known from other groups who are not in this one yet. */
@@ -88,6 +105,7 @@ class GroupViewModel(
             loaded = true,
             name = group?.name.orEmpty(),
             archived = group?.archived == true,
+            inviteCode = group?.inviteCode,
             members = members,
             expenses = expenses,
             contacts = users.filter { !it.isMe && it.id !in memberIds },

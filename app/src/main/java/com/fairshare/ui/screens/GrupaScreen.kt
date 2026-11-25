@@ -125,7 +125,7 @@ fun GrupaScreen(
     }
 
     if (showCode) {
-        GroupCodeDialog(code = InviteCodes.format(viewModel.groupId), onDismiss = { showCode = false })
+        GroupCodeDialog(code = state.inviteCode?.let(InviteCodes::format), onDismiss = { showCode = false })
     }
 
     expenseDetails?.let { expenseId ->
@@ -526,23 +526,27 @@ private fun DetailLine(label: String, value: String) {
 
 /** Short code of the group, e.g. "FS-A". It can be typed in "Dołącz z kodu" on the Grupy tab. */
 @Composable
-private fun GroupCodeDialog(code: String, onDismiss: () -> Unit) {
+private fun GroupCodeDialog(code: String?, onDismiss: () -> Unit) {
     val clipboard = LocalClipboardManager.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Kod grupy") },
+        title = { Text("Zaproś do grupy") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(code, style = MaterialTheme.typography.headlineMedium)
+                Text(code ?: "Kod pojawi się po synchronizacji", style = MaterialTheme.typography.headlineMedium)
                 Text(
-                    "Grupa jest zapisana tylko na tym telefonie. Kod pozwala ją szybko otworzyć na zakładce Grupy.",
+                    "Wyślij kod znajomemu. Po założeniu konta w Fair Share wpisuje go w Grupy → Dołącz z kodu " +
+                        "i widzi te same wydatki. Jeśli był dodany wcześniej z imienia, przy dołączaniu wybiera siebie " +
+                        "z listy i dotychczasowe wydatki przechodzą na jego konto.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Zamknij") } },
-        dismissButton = { TextButton(onClick = { clipboard.setText(AnnotatedString(code)) }) { Text("Kopiuj") } },
+        dismissButton = {
+            if (code != null) TextButton(onClick = { clipboard.setText(AnnotatedString(code)) }) { Text("Kopiuj") }
+        },
     )
 }
 

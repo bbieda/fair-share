@@ -76,6 +76,8 @@ data class SettlementLine(
     val balance: Long,
     /** How the other person wants to be paid (account number, BLIK...). */
     val paymentDetails: String? = null,
+    /** True when the person uses the app: then they set their payment details themselves. */
+    val hasAccount: Boolean = false,
 )
 
 /** Spending on one day, in grosze. date is LocalDate.toEpochDay(). */
@@ -121,4 +123,9 @@ data class ActivityItem(
     val seen: Boolean,
     val involvesMe: Boolean,
     val timestamp: Long,
+)
+
+data class IdUid(
+    val id: Long,
+    val uid: String,
 )

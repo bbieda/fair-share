@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
 import android.util.Base64
+import com.fairshare.data.sync.ApiException
+import com.fairshare.data.sync.FairShareApi
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -17,9 +19,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
-import java.net.URL
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
@@ -32,11 +32,11 @@ import kotlin.math.roundToInt
  * one has not answered after [hedgeAfterMs] (on 11.11 it took over 10 s twice in a row), the second one starts too, and
  * whichever answers first wins. A model that fails fast (503) hands over at once.
  *
- * The key is put into the APK at build time (BuildConfig.GEMINI_API_KEY): fine for a test build on your own phone,
- * but in the real app this call belongs on the backend, so the key never ships in the APK.
+ * Every request goes through our server (api.php?action=gemini), which adds the API key and passes Google's answer
+ * back unchanged: the key is never in the APK. The server allows it only for logged-in accounts, with a daily limit.
  */
 class GeminiReceiptReader(
-    private val apiKey: String,
+    private val api: FairShareApi,
     /** Tried in order: when the first one is overloaded (503), times out or hits a limit, the next one answers. */
     private val models: List<String>,
     /** 3.5 Flash-Lite answers in 2,5 s typically, 9 in 10 under 4,3 s (WNIOSKI.md): past that the next model joins. */
@@ -117,7 +117,7 @@ class GeminiReceiptReader(
         }
     }
 
-    private fun readWith(model: String, jpeg: ByteArray, timeoutMs: Int): Pair<ScannedReceipt, Int> {
+    private suspend fun readWith(model: String, jpeg: ByteArray, timeoutMs: Int): Pair<ScannedReceipt, Int> {
         val user = JSONObject()
             .put("role", "user")
             .put("parts", JSONArray()
@@ -142,8 +142,8 @@ class GeminiReceiptReader(
         return (if (second.items.isNotEmpty() && second.gap < first.gap) second else first) to 2
     }
 
-    /** One generateContent call → (receipt, raw JSON text of the answer). */
-    private fun ask(model: String, contents: JSONArray, timeoutMs: Int): Pair<ScannedReceipt, String> {
+    /** One generateContent call (through our server) → (receipt, raw JSON text of the answer). */
+    private suspend fun ask(model: String, contents: JSONArray, timeoutMs: Int): Pair<ScannedReceipt, String> {
         val body = JSONObject()
             .put("system_instruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", ReceiptPrompt.SYSTEM))))
             .put("contents", contents)
@@ -152,27 +152,23 @@ class GeminiReceiptReader(
                 .put("response_mime_type", "application/json")
                 .put("response_json_schema", SCHEMA))
 
-        val url = URL("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 10_000
-            readTimeout = timeoutMs
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("x-goog-api-key", apiKey)
-        }
-        val (code, response) = try {
-            connection.outputStream.use { it.write(body.toString().toByteArray()) }
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            status to (stream?.bufferedReader()?.use { it.readText() } ?: "")
+        val proxied = try {
+            api.call(
+                "gemini",
+                JSONObject().put("model", model).put("request_json", body.toString()).put("timeout_ms", timeoutMs),
+                // the server waits up to timeoutMs for Google, plus the upload of the photo
+                readTimeoutMs = timeoutMs + 10_000,
+            )
         } catch (e: SocketTimeoutException) {
             throw ModelUnavailable("$model nie odpowiedziało w ${timeoutMs / 1000} s", retryable = false)
         } catch (e: IOException) {
-            throw ModelUnavailable("$model: brak połączenia (${e.message})", retryable = false)
-        } finally {
-            connection.disconnect()
+            throw ModelUnavailable("$model: brak połączenia z serwerem (${e.message})", retryable = false)
+        } catch (e: ApiException) {
+            // not logged in, AI switched off on the server, daily limit used up: the rules' reading stays
+            throw ModelUnavailable("$model: ${e.message}", retryable = false)
         }
+        val code = proxied.getInt("status")
+        val response = proxied.optString("response")
         if (code == 429 || code >= 500) {
             throw ModelUnavailable("$model: HTTP $code ${errorMessage(response)}", retryable = code == 429 || code == 503)
         }

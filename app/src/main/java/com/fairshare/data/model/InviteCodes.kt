@@ -1,17 +1,23 @@
 package com.fairshare.data.model
 
-/** Short code for a group that lives on this phone, e.g. "FS-A". */
-object InviteCodes {
-    fun format(groupId: Long): String = "FS-" + groupId.toString(36).uppercase()
+import java.security.SecureRandom
 
-    fun parse(raw: String): Long? {
-        val code = raw.trim().uppercase()
-            .removePrefix("FAIRSHARE")
-            .trim()
-            .removePrefix("FS-")
-            .removePrefix("FS")
-            .trim()
-        if (code.isEmpty()) return null
-        return code.toLongOrNull(36)?.takeIf { it > 0 }
-    }
+/**
+ * Group invite codes, e.g. "K7MQ-2XPA": 8 random characters without 0/O and 1/I/L, so a code read aloud or
+ * retyped from a screenshot still works. Same alphabet and length as server/api/api.php, which keeps the code
+ * the phone proposes unless another group already has it.
+ */
+object InviteCodes {
+    private const val ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+    const val LENGTH = 8
+    private val random = SecureRandom()
+
+    fun generate(): String = buildString { repeat(LENGTH) { append(ALPHABET[random.nextInt(ALPHABET.length)]) } }
+
+    /** "K7MQ2XPA" -> "K7MQ-2XPA" for showing. */
+    fun format(code: String): String = if (code.length == LENGTH) code.substring(0, 4) + "-" + code.substring(4) else code
+
+    /** What the user typed -> the stored form, or null when it cannot be a code. */
+    fun normalize(raw: String): String? =
+        raw.uppercase().filter { it.isLetterOrDigit() }.takeIf { code -> code.length == LENGTH && code.all { it in ALPHABET } }
 }

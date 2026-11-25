@@ -231,8 +231,8 @@ private fun Intro(aiAvailable: Boolean, aiModel: String?) {
         } else {
             Banner(
                 Icons.Outlined.AutoAwesome,
-                "Gemini wyłączone: aplikacja została zbudowana bez klucza API. Działa tylko ML Kit + reguły " +
-                    "(klucz: gemini.apiKey w local.properties albo zmienna GEMINI_API_KEY, opis w docs/skaner.md).",
+                "Gemini wyłączone: aplikacja nie ma adresu serwera. Działa tylko ML Kit + reguły " +
+                    "(opis w docs/skaner.md).",
                 MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

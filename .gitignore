@@ -15,3 +15,6 @@
 /skany/
 app/schemas/com.fairshare.data.db.FairShareDatabase/1.json
 app/schemas/com.fairshare.data.db.FairShareDatabase/2.json
+# server: the filled-in database password must never be committed
+/server/fairshare-config.php
+/server/api/config.php

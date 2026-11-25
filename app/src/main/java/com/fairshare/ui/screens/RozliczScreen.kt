@@ -117,8 +117,10 @@ fun RozliczScreen(
                     amountColor = Negative,
                     // when I have to pay, show where the money should go
                     paymentHint = line.paymentDetails?.takeIf { it.isNotBlank() }
-                        ?.let { "Dane do spłaty: $it" } ?: "Dodaj dane do spłaty tej osoby",
-                    onPaymentClick = { editingPaymentFor = line.userId },
+                        ?.let { "Dane do spłaty: $it" }
+                        ?: if (line.hasAccount) "${line.name} nie podał(a) jeszcze danych do spłaty" else "Dodaj dane do spłaty tej osoby",
+                    // someone with an account sets them in their own profile; for the others I can type them in
+                    onPaymentClick = { if (!line.hasAccount) editingPaymentFor = line.userId },
                 ) {
                     FilledTonalButton(
                         onClick = { settling = line.userId to line.groupId },

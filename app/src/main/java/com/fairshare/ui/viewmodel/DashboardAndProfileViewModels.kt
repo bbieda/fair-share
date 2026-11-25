@@ -16,6 +16,8 @@ import com.fairshare.data.db.PersonBalance
 import com.fairshare.data.db.SettlementLine
 import com.fairshare.data.db.UserEntity
 import com.fairshare.data.model.Money
+import com.fairshare.data.sync.Session
+import com.fairshare.data.sync.SyncManager
 import com.fairshare.ui.ProfilePhotos
 import com.fairshare.ui.components.monthShortName
 import com.fairshare.ui.notifyIfEnabled
@@ -59,7 +61,13 @@ class ProfileViewModel(
     private val app: Application,
     private val repository: FairShareRepository,
     val settings: AppSettings,
+    private val sync: SyncManager,
 ) : ViewModel() {
+    val account: StateFlow<Session.Account?> = sync.account
+    val syncStatus: StateFlow<SyncManager.Status> = sync.status
+    val pendingChanges: StateFlow<Int> = sync.pendingCount
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
     val me: StateFlow<UserEntity?> = repository.me
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -113,9 +121,14 @@ class ProfileViewModel(
 
     fun removeCustomCategory(name: String) = settings.removeCustomCategory(name)
 
-    fun deleteAllData() {
+    fun syncNow() {
+        sync.requestSync()
+    }
+
+    /** Removes the account's data from this phone (it stays on the server); the app goes back to the login screen. */
+    fun logout() {
         viewModelScope.launch {
-            repository.deleteAllData()
+            sync.logout()
             settings.resetData()
             withContext(Dispatchers.IO) { ProfilePhotos.delete(app) }
         }
@@ -170,6 +183,7 @@ class RozliczViewModel(
         }
     }
 
+    /** Only for people without an account (the screen does not offer it for the others). */
     fun savePaymentDetails(userId: Long, details: String) {
         viewModelScope.launch { repository.updatePersonPaymentDetails(userId, details) }
     }

@@ -19,11 +19,12 @@ android {
         versionName = "0.1"
 
         // Receipt scanner, AI step: Gemini reads the photo only when the items do not add up to the total.
-        // Key from local.properties (gemini.apiKey=...) or the GEMINI_API_KEY environment variable; without it the
-        // scanner works with ML Kit + rules only. The key ends up inside the APK: OK for a test build on your own
-        // phone, never for a published app (there the call must go through our backend).
-        buildConfigField("String", "GEMINI_API_KEY", "\"${geminiApiKey()}\"")
+        // The call goes through our server (api.php?action=gemini), which holds the key: no key is ever built into
+        // the APK, because anyone with the APK could unpack it. These models must be allowed in the server config.
         buildConfigField("String", "GEMINI_MODELS", "\"gemini-3.5-flash-lite,gemini-3.1-flash-lite\"")
+        // Cloud sync: address of server/api/api.php (docs/chmura.md). Set fairshare.apiUrl in gradle.properties
+        // (shared by the team) or in local.properties (your own test server); empty = the app cannot log in.
+        buildConfigField("String", "API_BASE_URL", "\"${apiBaseUrl()}\"")
         // Keep every scanned photo with its reading on the phone (scanner/ScanArchive.kt): debug builds only
         buildConfigField("boolean", "SAVE_SCANS", "false")
     }
@@ -75,12 +76,12 @@ dependencies {
     debugImplementation(libs.androidx.ui.tooling)
 }
 
-/** Gemini API key for the receipt scanner: local.properties `gemini.apiKey`, else env GEMINI_API_KEY, else empty. */
-fun geminiApiKey(): String {
+/** URL of the FairShare API: local.properties `fairshare.apiUrl`, else the gradle property of the same name. */
+fun apiBaseUrl(): String {
     val local = Properties()
     rootProject.file("local.properties").takeIf { it.isFile }?.inputStream()?.use { local.load(it) }
-    val key = local.getProperty("gemini.apiKey")?.trim()?.takeIf { it.isNotEmpty() }
-        ?: System.getenv("GEMINI_API_KEY")?.trim().orEmpty()
-    // only characters an API key has, so nothing can break out of the generated Java string
-    return key.filter { it.isLetterOrDigit() || it == '-' || it == '_' }
+    val url = local.getProperty("fairshare.apiUrl")?.trim()?.takeIf { it.isNotEmpty() }
+        ?: (findProperty("fairshare.apiUrl") as String?)?.trim().orEmpty()
+    // nothing that could break out of the generated Java string
+    return url.filter { it.code in 0x21..0x7e && it != '"' && it != '\\' }
 }

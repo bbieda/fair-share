@@ -65,15 +65,15 @@ prawdziwych paragonów). Wersja release niczego nie zapisuje (`SAVE_SCANS` w `ap
 
 ## Klucz Gemini
 
-Bez klucza skaner działa tylko z ML Kit + regułami (ekran o tym mówi). Klucz z https://aistudio.google.com/apikey
-podaje się na jeden z dwóch sposobów:
+Klucz jest **tylko na serwerze**, w `~/fairshare-config.php` (`'gemini_api_key' => '...'`, klucz
+z https://aistudio.google.com/apikey). Aplikacja wysyła zapytanie do `api.php?action=gemini`, a serwer dokłada klucz
+i odsyła odpowiedź Google bez zmian. W APK nie ma żadnego klucza: APK da się rozpakować, więc klucz w aplikacji
+mógłby wyciągnąć każdy, kto ją ma.
 
-- w `local.properties` (nie trafia do gita): `gemini.apiKey=TWÓJ_KLUCZ`
-- albo zmienna środowiskowa `GEMINI_API_KEY` (np. `setx GEMINI_API_KEY "..."` i nowe okno).
-
-Klucz jest wbudowywany w APK przy buildzie, więc to tylko do testów na własnym telefonie. W aplikacji dla
-użytkowników wywołanie Gemini musi iść przez nasz backend (np. `POST /api/receipts/parse-image`), żeby klucz nie
-wyciekł. Na darmowym planie Google może używać zdjęć do trenowania; na płatnym nie.
+- Dostęp mają tylko zalogowane konta, z dziennym limitem: 60 zapytań na konto i 300 na cały serwer. Zmienia się je
+  w configu (`gemini_daily_limit`, `gemini_global_daily_limit`), a dozwolone modele w `gemini_models`.
+- Bez klucza na serwerze albo bez zalogowania skaner działa tylko z ML Kit + regułami.
+- Na darmowym planie Google może używać zdjęć do trenowania, na płatnym nie.
 
 ## Testy
 
@@ -98,6 +98,5 @@ kontrolna i przeliczanie odpowiedzi modelu (rabaty, kaucje, rabat na cały parag
 ## Co dalej
 
 - Podział po pozycjach jest zrobiony: opis w `docs/pozycje.md`.
-- Wywołanie Gemini przez backend zamiast klucza w APK.
 - Zmierzyć czas ML Kit na prawdziwych telefonach (w benchmarku był emulator).
 - Ewentualnie przycinanie zdjęcia do paragonu (ML Kit Document Scanner) przed odczytem.

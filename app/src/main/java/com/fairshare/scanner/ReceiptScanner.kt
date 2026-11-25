@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.SystemClock
 import android.util.Log
 import com.fairshare.BuildConfig
+import com.fairshare.FairShareApplication
 import com.fairshare.scanner.rules.RuleBasedReceiptParser
 import kotlin.math.roundToInt
 
@@ -19,9 +20,10 @@ import kotlin.math.roundToInt
  */
 class ReceiptScanner(context: Context) {
     private val ocr = ReceiptOcr(context.applicationContext)
-    private val gemini: GeminiReceiptReader? = BuildConfig.GEMINI_API_KEY.takeIf { it.isNotBlank() }?.let { key ->
-        GeminiReceiptReader(key, BuildConfig.GEMINI_MODELS.split(',').map { it.trim() }.filter { it.isNotEmpty() })
-    }
+    /** The AI step goes through our server, which holds the Gemini key; without a server address it is off. */
+    private val gemini: GeminiReceiptReader? = (context.applicationContext as FairShareApplication).api
+        .takeIf { it.isConfigured }
+        ?.let { api -> GeminiReceiptReader(api, BuildConfig.GEMINI_MODELS.split(',').map { it.trim() }.filter { it.isNotEmpty() }) }
 
     val aiAvailable: Boolean get() = gemini != null
 

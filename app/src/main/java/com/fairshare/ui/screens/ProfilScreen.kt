@@ -25,8 +25,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Label
+import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.CloudSync
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DarkMode
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -64,6 +66,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fairshare.data.AppSettings
 import com.fairshare.data.model.ExpenseCategory
+import com.fairshare.data.sync.SyncManager
 import com.fairshare.ui.components.BackHeader
 import com.fairshare.ui.components.ConfirmDialog
 import com.fairshare.ui.components.ListRow
@@ -72,6 +75,9 @@ import com.fairshare.ui.rememberProfilePhoto
 import com.fairshare.ui.theme.FairShareTheme
 import com.fairshare.ui.viewmodel.AppViewModelProvider
 import com.fairshare.ui.viewmodel.ProfileViewModel
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 @Composable
 fun ProfilScreen(
@@ -91,7 +97,10 @@ fun ProfilScreen(
     var showPhotoOptions by rememberSaveable { mutableStateOf(false) }
     var showTheme by rememberSaveable { mutableStateOf(false) }
     var showCategories by rememberSaveable { mutableStateOf(false) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmLogout by rememberSaveable { mutableStateOf(false) }
+    val account by viewModel.account.collectAsStateWithLifecycle()
+    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val pendingChanges by viewModel.pendingChanges.collectAsStateWithLifecycle()
     var message by rememberSaveable { mutableStateOf<String?>(null) }
     // Where the camera app writes the picture. Saved, because the app can be killed while the camera is open.
     var pendingCameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
@@ -150,7 +159,10 @@ fun ProfilScreen(
         onEditCategories = { showCategories = true },
         onEditTheme = { showTheme = true },
         onExport = { viewModel.exportCsv(onError = { message = it }) },
-        onDeleteAll = { confirmDelete = true },
+        accountEmail = account?.email.orEmpty(),
+        syncSummary = syncSummary(syncStatus, pendingChanges),
+        onSyncNow = viewModel::syncNow,
+        onLogout = { confirmLogout = true },
     )
 
     if (showPhotoOptions) {
@@ -235,13 +247,19 @@ fun ProfilScreen(
         )
     }
 
-    if (confirmDelete) {
+    if (confirmLogout) {
         ConfirmDialog(
-            title = "Usunąć wszystkie dane?",
-            message = "Grupy, osoby, wydatki i aktywność zostaną trwale usunięte z tego telefonu.",
-            confirmLabel = "Usuń wszystko",
-            onDismiss = { confirmDelete = false },
-            onConfirm = viewModel::deleteAllData,
+            title = "Wylogować się?",
+            message = "Grupy i wydatki znikną z tego telefonu, ale zostają na serwerze: wrócą po ponownym zalogowaniu." +
+                if (pendingChanges > 0) {
+                    "\n\nUwaga: zmiany niewysłane jeszcze na serwer ($pendingChanges) przepadną. " +
+                        "Połącz się z internetem i poczekaj na synchronizację, jeśli chcesz je zachować."
+                } else {
+                    ""
+                },
+            confirmLabel = "Wyloguj",
+            onDismiss = { confirmLogout = false },
+            onConfirm = viewModel::logout,
         )
     }
 
@@ -272,7 +290,10 @@ private fun ProfilContent(
     onEditCategories: () -> Unit = {},
     onEditTheme: () -> Unit = {},
     onExport: () -> Unit = {},
-    onDeleteAll: () -> Unit = {},
+    accountEmail: String = "",
+    syncSummary: String = "",
+    onSyncNow: () -> Unit = {},
+    onLogout: () -> Unit = {},
 ) {
     Column(
         modifier = Modifier
@@ -370,15 +391,22 @@ private fun ProfilContent(
             onClick = onExport,
         )
 
-        SettingsSection("Dane")
+        SettingsSection("Konto")
         ListRow(
-            Icons.Outlined.DeleteOutline,
-            "Usuń wszystkie dane",
-            supporting = "Z tego telefonu",
+            Icons.Outlined.CloudSync,
+            "Synchronizacja",
+            supporting = syncSummary,
+            showChevron = false,
+            onClick = onSyncNow,
+        )
+        ListRow(
+            Icons.AutoMirrored.Outlined.Logout,
+            "Wyloguj się",
+            supporting = accountEmail,
             iconTint = MaterialTheme.colorScheme.error,
             headlineColor = MaterialTheme.colorScheme.error,
             showChevron = false,
-            onClick = onDeleteAll,
+            onClick = onLogout,
         )
     }
 }
@@ -584,7 +612,25 @@ private fun ProfilPreview() {
                 theme = AppSettings.THEME_DARK,
                 notificationsOn = false,
                 customCategoryCount = 0,
+                accountEmail = "oskar@example.com",
+                syncSummary = "Ostatnio: 12:30",
             )
         }
     }
+}
+
+/** One line about the sync for the profile: when it last worked and what is still waiting to be sent. */
+private fun syncSummary(status: SyncManager.Status, pending: Int): String {
+    val base = when (status.state) {
+        SyncManager.State.SYNCING -> "Synchronizuję…"
+        SyncManager.State.OFFLINE -> "Brak połączenia z serwerem"
+        SyncManager.State.ERROR -> status.message ?: "Błąd synchronizacji"
+        SyncManager.State.IDLE -> if (status.lastSyncAt > 0) {
+            "Ostatnio: " + DateTimeFormatter.ofPattern("d.MM, HH:mm")
+                .format(Instant.ofEpochMilli(status.lastSyncAt).atZone(ZoneId.systemDefault()))
+        } else {
+            "Jeszcze nie zsynchronizowano"
+        }
+    }
+    return if (pending > 0) "$base · do wysłania: $pending" else base
 }

@@ -21,15 +21,18 @@ import com.fairshare.data.db.PersonBalance
 import com.fairshare.data.db.SettlementLine
 import com.fairshare.data.db.UserEntity
 import com.fairshare.data.model.ExpenseCategory
+import com.fairshare.data.model.InviteCodes
 import com.fairshare.data.model.Money
-import kotlinx.coroutines.Dispatchers
+import com.fairshare.data.sync.Ops
+import com.fairshare.data.sync.enqueue
+import com.fairshare.data.sync.json
+import com.fairshare.data.sync.jsonArray
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 import kotlin.math.abs
@@ -43,12 +46,19 @@ data class ExpenseItemInput(val name: String, val price: Long, val shares: Map<L
 /** Everything the details dialog shows about one expense beyond its list row. */
 data class ExpenseDetails(
     val shares: List<ExpenseShareRow>,
-    /** Empty unless the expense was split by receipt items. */
+    /** Empty unless the expense was split by items. */
     val items: List<ExpenseItemRow>,
 )
 
+/**
+ * The only place the UI reads and writes data. Writes go to the local database at once (the app works offline)
+ * and, in the same transaction, into the queue of changes for the server; [onLocalChange] then asks for a sync.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
-class FairShareRepository(private val db: FairShareDatabase) {
+class FairShareRepository(
+    private val db: FairShareDatabase,
+    private val onLocalChange: () -> Unit = {},
+) {
     private val users = db.userDao()
     private val groups = db.groupDao()
     private val expenses = db.expenseDao()
@@ -56,42 +66,65 @@ class FairShareRepository(private val db: FairShareDatabase) {
 
     // ---------- Users & Profile ----------
 
+    /** The logged-in person; emits once the account is on this phone (right after logging in). */
     val me: Flow<UserEntity> = users.observeMe().filterNotNull()
     private val meId: Flow<Long> = me.map { it.id }.distinctUntilChanged()
     val allUsers: Flow<List<UserEntity>> = users.observeAll()
 
-    suspend fun requireMeId(): Long =
-        users.getMe()?.id ?: users.insert(UserEntity(name = FairShareDatabase.DEFAULT_MY_NAME, isMe = true))
+    private suspend fun requireMe(): UserEntity = users.getMe() ?: throw IllegalStateException("Nie jesteś zalogowany")
+
+    suspend fun requireMeId(): Long = requireMe().id
 
     suspend fun renameMe(name: String) {
         val clean = name.cleanName() ?: return
-        val meUser = users.getMe() ?: return
-        users.update(meUser.copy(name = clean))
-        logActivity("PROFILE_UPDATE", "Zmieniono imię na $clean")
+        updateProfile("Zmieniono imię na $clean") { it.copy(name = clean) }
     }
 
     suspend fun updatePaymentDetails(details: String) {
-        val meUser = users.getMe() ?: return
-        users.update(meUser.copy(paymentDetails = details.trim().ifEmpty { null }))
-        logActivity("PROFILE_UPDATE", "Zaktualizowano dane do spłat")
+        updateProfile("Zaktualizowano dane do spłat") { it.copy(paymentDetails = details.trim().ifEmpty { null }) }
     }
 
     suspend fun updateCurrency(currency: String) {
-        val meUser = users.getMe() ?: return
-        users.update(meUser.copy(defaultCurrency = currency))
-        logActivity("PROFILE_UPDATE", "Zmieniono domyślną walutę na $currency")
+        updateProfile("Zmieniono domyślną walutę na $currency") { it.copy(defaultCurrency = currency) }
     }
 
+    private suspend fun updateProfile(logText: String, change: (UserEntity) -> UserEntity) {
+        write {
+            val updated = change(requireMe())
+            users.update(updated)
+            db.enqueue(
+                Ops.UPDATE_PROFILE,
+                json("name" to updated.name, "payment_details" to updated.paymentDetails, "default_currency" to updated.defaultCurrency),
+            )
+            logActivity("PROFILE_UPDATE", logText)
+        }
+    }
+
+    /** The profile photo stays on this phone (it is not sent to the server). */
     suspend fun updatePhotoUri(photoUri: String?) {
-        val meUser = users.getMe() ?: return
-        users.update(meUser.copy(photoUri = photoUri))
-        val text = if (photoUri == null) "Usunięto zdjęcie profilowe" else "Zaktualizowano zdjęcie profilowe"
-        logActivity("PROFILE_UPDATE", text)
+        write {
+            users.update(requireMe().copy(photoUri = photoUri))
+            logActivity("PROFILE_UPDATE", if (photoUri == null) "Usunięto zdjęcie profilowe" else "Zaktualizowano zdjęcie profilowe")
+        }
     }
 
-    /** Payment details (account number, BLIK...) of any person, e.g. a friend I have to pay back. */
-    suspend fun updatePersonPaymentDetails(userId: Long, details: String) {
-        users.setPaymentDetails(userId, details.trim().ifEmpty { null })
+    /**
+     * Payment details (account number, BLIK...) of a friend I have to pay back. Only for people without an
+     * account: those with one set them in their own profile. Returns false when that is the case.
+     */
+    suspend fun updatePersonPaymentDetails(userId: Long, details: String): Boolean {
+        val person = users.getById(userId) ?: return false
+        if (person.isMe) {
+            updatePaymentDetails(details)
+            return true
+        }
+        if (person.hasAccount) return false
+        val clean = details.trim().ifEmpty { null }
+        write {
+            users.setPaymentDetails(userId, clean)
+            db.enqueue(Ops.UPDATE_PERSON, json("person_id" to person.uid, "payment_details" to clean))
+        }
+        return true
     }
 
     // ---------- Activity Logs ----------
@@ -101,20 +134,39 @@ class FairShareRepository(private val db: FairShareDatabase) {
     /** Activity log rows with the group name, newest first. */
     val activityItems: Flow<List<ActivityItem>> = activityLogs.observeItems()
 
-    suspend fun logActivity(
+    /**
+     * Adds an entry to the feed; it goes to the server too, so the other members of [groupId] see it.
+     * [involved]: local ids of the people it concerns (for "Dotyczy mnie"); null = only me.
+     * Call inside [write].
+     */
+    private suspend fun logActivity(
         actionType: String,
         description: String,
         groupId: Long? = null,
-        involvesMe: Boolean = true,
+        involved: Collection<Long>? = null,
     ) {
-        activityLogs.insert(
-            ActivityLogEntity(
-                groupId = groupId,
-                actionType = actionType,
-                description = description,
-                timestamp = System.currentTimeMillis(),
-                involvesMe = involvesMe,
-            )
+        val me = requireMe()
+        val involvedIds = involved ?: listOf(me.id)
+        val entry = ActivityLogEntity(
+            groupId = groupId,
+            actionType = actionType,
+            description = description,
+            seen = true,
+            timestamp = System.currentTimeMillis(),
+            involvesMe = groupId == null || me.id in involvedIds,
+        )
+        activityLogs.insert(entry)
+        val involvedUids = users.getByIds(involvedIds).map { it.uid }
+        db.enqueue(
+            Ops.ADD_ACTIVITY,
+            json(
+                "id" to entry.uid,
+                "group_id" to groupId?.let { groups.getGroup(it)?.uid },
+                "type" to actionType,
+                "description" to description,
+                "involves" to jsonArray(involvedUids) { it },
+                "created_at" to entry.timestamp,
+            ),
         )
     }
 
@@ -128,33 +180,49 @@ class FairShareRepository(private val db: FairShareDatabase) {
 
     suspend fun createGroup(name: String): Long {
         val clean = requireNotNull(name.cleanName()) { "Nazwa grupy nie może być pusta" }
-        return db.withTransaction {
-            val groupId = groups.insert(GroupEntity(name = clean))
+        return write {
+            val group = GroupEntity(name = clean, inviteCode = InviteCodes.generate())
+            val groupId = groups.insert(group)
             groups.insertMember(GroupMemberEntity(groupId = groupId, userId = requireMeId()))
+            db.enqueue(
+                Ops.CREATE_GROUP,
+                json("id" to group.uid, "name" to clean, "invite_code" to group.inviteCode, "created_at" to group.createdAt),
+            )
             logActivity("CREATE_GROUP", "Utworzono grupę „$clean”", groupId)
             groupId
         }
     }
 
+    /**
+     * Adds a person by name. Someone with that name I already know (from another group) is reused; otherwise a
+     * new person without an account is created, who can take over this entry when joining with the group code.
+     */
     suspend fun addMemberByName(groupId: Long, name: String): Long {
         val clean = requireNotNull(name.cleanName()) { "Imię nie może być puste" }
-        return db.withTransaction {
-            val userId = users.findOtherByName(clean)?.id ?: users.insert(UserEntity(name = clean))
-            // Adding someone who is already in the group must not create a second log entry
-            if (userId !in groups.getMemberIds(groupId)) {
-                groups.insertMember(GroupMemberEntity(groupId = groupId, userId = userId))
-                logActivity("ADD_MEMBER", "Dodano $clean do grupy", groupId)
-            }
+        val known = users.findOtherByName(clean)
+        if (known != null) {
+            addMember(groupId, known.id)
+            return known.id
+        }
+        return write {
+            val group = requireNotNull(groups.getGroup(groupId)) { "Nie ma takiej grupy" }
+            val person = UserEntity(name = clean)
+            val userId = users.insert(person)
+            groups.insertMember(GroupMemberEntity(groupId = groupId, userId = userId))
+            db.enqueue(Ops.ADD_PERSON, json("group_id" to group.uid, "person_id" to person.uid, "name" to clean))
+            logActivity("ADD_MEMBER", "Dodano $clean do grupy", groupId)
             userId
         }
     }
 
     suspend fun addMember(groupId: Long, userId: Long) {
-        db.withTransaction {
-            if (userId in groups.getMemberIds(groupId)) return@withTransaction
+        write {
+            if (userId in groups.getMemberIds(groupId)) return@write
+            val group = groups.getGroup(groupId) ?: return@write
+            val person = users.getById(userId) ?: return@write
             groups.insertMember(GroupMemberEntity(groupId = groupId, userId = userId))
-            val name = users.getById(userId)?.name ?: "osobę"
-            logActivity("ADD_MEMBER", "Dodano $name do grupy", groupId)
+            db.enqueue(Ops.ADD_MEMBER, json("group_id" to group.uid, "person_id" to person.uid))
+            logActivity("ADD_MEMBER", "Dodano ${person.name} do grupy", groupId)
         }
     }
 
@@ -162,17 +230,26 @@ class FairShareRepository(private val db: FairShareDatabase) {
 
     suspend fun renameGroup(groupId: Long, name: String) {
         val clean = requireNotNull(name.cleanName()) { "Nazwa grupy nie może być pusta" }
-        val group = groups.getGroup(groupId) ?: return
-        groups.update(group.copy(name = clean))
-        logActivity("RENAME_GROUP", "Zmieniono nazwę grupy na „$clean”", groupId)
+        write {
+            val group = groups.getGroup(groupId) ?: return@write
+            saveGroup(group.copy(name = clean))
+            logActivity("RENAME_GROUP", "Zmieniono nazwę grupy na „$clean”", groupId)
+        }
     }
 
     suspend fun setArchived(groupId: Long, archived: Boolean) {
-        val group = groups.getGroup(groupId) ?: return
-        if (group.archived == archived) return
-        groups.update(group.copy(archived = archived))
-        val action = if (archived) "Zarchiwizowano grupę „${group.name}”" else "Przywrócono grupę „${group.name}”"
-        logActivity("ARCHIVE_GROUP", action, groupId)
+        write {
+            val group = groups.getGroup(groupId) ?: return@write
+            if (group.archived == archived) return@write
+            saveGroup(group.copy(archived = archived))
+            val action = if (archived) "Zarchiwizowano grupę „${group.name}”" else "Przywrócono grupę „${group.name}”"
+            logActivity("ARCHIVE_GROUP", action, groupId)
+        }
+    }
+
+    private suspend fun saveGroup(group: GroupEntity) {
+        groups.update(group)
+        db.enqueue(Ops.UPDATE_GROUP, json("id" to group.uid, "name" to group.name, "archived" to group.archived))
     }
 
     // ---------- Expenses & Settlements ----------
@@ -208,7 +285,8 @@ class FairShareRepository(private val db: FairShareDatabase) {
             require(perUser.filterValues { it != 0L } == shares) { "Pozycje muszą sumować się do udziałów osób" }
         }
 
-        return db.withTransaction {
+        return write {
+            val group = requireNotNull(groups.getGroup(groupId)) { "Nie ma takiej grupy" }
             val members = groups.getMemberIds(groupId).toSet()
             require(payerId in members) { "Płacący nie należy do grupy" }
             require(members.containsAll(shares.keys)) { "Ktoś z podziału nie należy do grupy" }
@@ -217,30 +295,55 @@ class FairShareRepository(private val db: FairShareDatabase) {
             val cleanDesc = description.trim().ifEmpty {
                 ExpenseCategory.fromKey(cleanCategory)?.label ?: cleanCategory ?: if (isSettlement) "Rozliczenie" else "Wydatek"
             }
-            val expenseId = expenses.insertExpense(
-                ExpenseEntity(
-                    groupId = groupId,
-                    payerId = payerId,
-                    amount = amount,
-                    description = cleanDesc,
-                    category = cleanCategory,
-                    date = date.toEpochDay(),
-                    isSettlement = isSettlement,
-                )
+            val expense = ExpenseEntity(
+                groupId = groupId,
+                payerId = payerId,
+                amount = amount,
+                description = cleanDesc,
+                category = cleanCategory,
+                date = date.toEpochDay(),
+                isSettlement = isSettlement,
             )
+            val expenseId = expenses.insertExpense(expense)
             expenses.insertShares(
-                shares.map { (userId, share) ->
-                    ExpenseShareEntity(expenseId = expenseId, userId = userId, amount = share)
-                }
+                shares.map { (userId, share) -> ExpenseShareEntity(expenseId = expenseId, userId = userId, amount = share) }
             )
+            val itemNames = items.map { it.name.trim().ifEmpty { "Pozycja" } }
             items.forEachIndexed { position, item ->
                 val itemId = expenses.insertItem(
-                    ExpenseItemEntity(expenseId = expenseId, name = item.name.trim().ifEmpty { "Pozycja" }, price = item.price, position = position)
+                    ExpenseItemEntity(expenseId = expenseId, name = itemNames[position], price = item.price, position = position)
                 )
                 expenses.insertItemShares(
                     item.shares.map { (userId, part) -> ExpenseItemShareEntity(itemId = itemId, userId = userId, amount = part) }
                 )
             }
+
+            val uidOf = users.getByIds(members).associate { it.id to it.uid }
+            fun sharesJson(map: Map<Long, Long>) = jsonArray(map.entries) { (userId, part) -> json("person_id" to uidOf.getValue(userId), "amount" to part) }
+            db.enqueue(
+                Ops.ADD_EXPENSE,
+                json(
+                    "id" to expense.uid,
+                    "group_id" to group.uid,
+                    "payer_id" to uidOf.getValue(payerId),
+                    "amount" to amount,
+                    "description" to cleanDesc,
+                    "category" to cleanCategory,
+                    "day" to expense.date,
+                    "is_settlement" to isSettlement,
+                    "created_at" to expense.createdAt,
+                    "shares" to sharesJson(shares),
+                    "items" to jsonArray(items.indices) { position ->
+                        json(
+                            "name" to itemNames[position],
+                            "price" to items[position].price,
+                            "position" to position,
+                            "shares" to sharesJson(items[position].shares),
+                        )
+                    },
+                ),
+            )
+
             val action = if (isSettlement) "SETTLEMENT" else "ADD_EXPENSE"
             val payerName = users.getById(payerId)?.name ?: "Ktoś"
             val text = if (isSettlement) {
@@ -248,8 +351,7 @@ class FairShareRepository(private val db: FairShareDatabase) {
             } else {
                 "Dodano wydatek „$cleanDesc” · $payerName zapłacił(a) ${Money.format(amount)}"
             }
-            val myId = requireMeId()
-            logActivity(action, text, groupId, involvesMe = payerId == myId || myId in shares.keys)
+            logActivity(action, text, groupId, involved = shares.keys + payerId)
             expenseId
         }
     }
@@ -261,7 +363,7 @@ class FairShareRepository(private val db: FairShareDatabase) {
      */
     suspend fun settleUp(groupId: Long, otherUserId: Long, amountGrosze: Long) {
         require(amountGrosze > 0) { "Kwota rozliczenia musi być większa od zera" }
-        db.withTransaction {
+        write {
             val myId = requireMeId()
             val signedBalance = expenses.getPairBalance(groupId, myId, otherUserId)
             require(signedBalance != 0L) { "Z tą osobą nie ma już nic do rozliczenia" }
@@ -292,12 +394,14 @@ class FairShareRepository(private val db: FairShareDatabase) {
         )
 
     suspend fun deleteExpense(expenseId: Long) {
-        val expense = expenses.getExpense(expenseId) ?: return
-        val myId = requireMeId()
-        val involvesMe = expense.payerId == myId || myId in expenses.getShareUserIds(expenseId)
-        expenses.deleteExpense(expenseId)
-        val what = if (expense.isSettlement) "spłatę" else "wydatek"
-        logActivity("DELETE_EXPENSE", "Usunięto $what „${expense.description}”", expense.groupId, involvesMe)
+        write {
+            val expense = expenses.getExpense(expenseId) ?: return@write
+            val involved = expenses.getShareUserIds(expenseId) + expense.payerId
+            expenses.deleteExpense(expenseId)
+            db.enqueue(Ops.DELETE_EXPENSE, json("id" to expense.uid))
+            val what = if (expense.isSettlement) "spłatę" else "wydatek"
+            logActivity("DELETE_EXPENSE", "Usunięto $what „${expense.description}”", expense.groupId, involved)
+        }
     }
 
     suspend fun buildExpensesCsv(): String {
@@ -345,9 +449,11 @@ class FairShareRepository(private val db: FairShareDatabase) {
 
     val unreadActivityCount: Flow<Int> = activityLogs.observeUnreadCount()
 
-    suspend fun deleteAllData() {
-        withContext(Dispatchers.IO) { db.clearAllTables() }
-        requireMeId()
+    /** A local change and its queue entry in one transaction, then a sync in the background. */
+    private suspend fun <T> write(block: suspend () -> T): T {
+        val result = db.withTransaction { block() }
+        onLocalChange()
+        return result
     }
 
     private fun String.cleanName(): String? = trim().replace(Regex("\\s+"), " ").takeIf { it.isNotEmpty() }
