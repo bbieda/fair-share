@@ -962,6 +962,8 @@ function action_gemini(PDO $pdo, array $auth, array $in, array $config): array
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT_MS => 10000,
         CURLOPT_TIMEOUT_MS => $timeoutMs,
+        // alwaysdata's IPv6 address is refused by Google ("User location is not supported"); IPv4 works
+        CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
     ]);
     $body = curl_exec($curl);
     $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
